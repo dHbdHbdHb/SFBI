@@ -1,0 +1,463 @@
+---
+title: "Assingment 1"
+output: html_document
+---
+#setup of data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+library(remotes)
+install_github("yonghah/esri2sf")
+library(esri2sf)
+library(reshape2)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+epa_zoning <- esri2sf("https://services8.arcgis.com/0IC8hha3hgQkmGoa/arcgis/rest/services/EastPaloAltoZoning_2021_WFL1/FeatureServer/1")
+
+smc_exemption <- read_csv("https://datahub.smcgov.org/api/views/pmvw-bs84/rows.csv?accessType=DOWNLOAD")
+```
+
+```{r import census function}
+import_census <- function(year) {
+  listCensusMetadata(
+    name = str_c(year, "/acs/acs5")
+  )
+}
+```
+
+```{r importing 5 yeas of ACS data}
+years <- 2015:2019
+acs_vars <- map(years, import_census)
+```
+
+```{r combining acs data}
+acs_vars <- acs_vars %>%
+  set_names(2015:2019) %>%
+  bind_rows(.id = "year")
+```
+
+
+```{r test for margin error}
+    census_owner_labels <- acs_vars %>%
+    filter(
+      year == 2019,
+      group %in% c("B25095")
+    )
+try <-
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "place:20956",
+    regionin = "state:06",
+    vars = "group(B25095)"
+  ) %>% 
+  mutate(
+      placeID = paste0(state,place)
+    ) %>% 
+    select(!c(state, place, GEO_ID, NAME) & !ends_with(c("EA","MA","E"))) %>%
+    pivot_longer(
+      ends_with("M"),
+    )
+
+```
+
+##ACS 5 Year Data Analysis
+
+#functions
+```{r processing data function}
+process_census_data <- function(data, labels) {
+  data %>%   
+    mutate(
+      placeID = paste0(state,place)
+    ) %>% 
+    select(!c(state, place, GEO_ID, NAME) & !ends_with(c("EA","MA","M"))) %>%
+    pivot_longer(
+      ends_with("E"),
+      names_to = "variable",
+      values_to = "estimate"
+    ) %>%
+    left_join(
+      labels %>%
+        select(name, label),
+      by = (c("variable" = "name"))
+    ) %>%
+    separate(
+      label,
+      into = c(NA,NA,"income_range","percentage"),
+      sep = "!!"
+    ) %>%
+    filter(
+      !is.na(percentage)
+    ) %>% 
+  mutate(occupant_type = "renter")
+}
+```
+
+```{r rent processing function}
+rent_burden <- function(year) {
+  census_renters_labels <- acs_vars %>%
+    filter(
+      .data$year == .env$year,
+      group %in% c("B25074")
+    )
+
+  getCensus(
+    name = "acs/acs5",
+    vintage = year,
+    region = "place:20956",
+    regionin = "state:06",
+    vars = "group(B25074)"
+  ) %>%
+  process_census_data(labels = census_renters_labels) 
+}
+```
+
+```{r owner processing function}
+owner_burden <- function(year){
+    census_owner_labels <- acs_vars %>%
+    filter(
+      .data$year == .env$year,
+      group %in% c("B25095")
+    )
+  getCensus(
+    name = "acs/acs5",
+    vintage = year,
+    region = "place:20956",
+    regionin = "state:06",
+    vars = "group(B25095)"
+  ) %>%
+  process_census_data(labels = census_owner_labels) %>% 
+  mutate(occupant_type = "owner")
+}
+```
+
+```{r percentage calculator function}
+percentage_calculator <- function(df){
+  df %>%
+    group_by(year, occupant_type) %>%
+    mutate(
+      rent_burdened = ifelse(
+        percentage %in% c(
+          "30.0 to 34.9 percent",
+          "35.0 to 39.9 percent",
+          "40.0 to 49.9 percent",
+          "50.0 percent or more"
+        ),
+        estimate,
+        NA
+      )
+    )  %>% 
+    summarize(
+      total_pop = sum(estimate, na.rm = T),
+      total_burdened = sum(rent_burdened, na.rm = T)
+    ) %>%
+    mutate(
+      percentage = total_burdened / total_pop,)
+}
+```
+
+#creation of dfs and charts
+```{r rent burdens df creation, warning = F, message = F, echo= FALSE}
+rent_burdens <- map(years, rent_burden) %>%
+  set_names(years) %>%
+  bind_rows(.id = "year") 
+```
+
+```{r owner burdens df creation, warning = F, message = F, echo=FALSE}
+owner_burdens <- map(years, owner_burden) %>%
+  set_names(years) %>%
+  bind_rows(.id = "year")
+```
+
+
+
+#Plot 1
+```{r comparison chart, echo=FALSE, warning = F, message = F}
+burden_chart <- rbind(
+  percentage_calculator(owner_burdens), 
+  percentage_calculator(rent_burdens)
+  ) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = year,
+      y = percentage*100,
+      fill = occupant_type
+    ),
+    stat = "identity",
+    position = "dodge"
+  ) + 
+  labs(
+    x = "ACS 5yr Data Report Year",
+    y = "Percentage",
+    title = "Housing Burden Comparison"
+  ) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic()
+
+burden_chart
+```
+#Income Bracket Burden Analysis
+
+#By Owner Income
+```{r income owner range analysis, echo=FALSE, warning = F, message = F}
+owner_burdens2 <- owner_burden(2019) %>%
+  filter(percentage != "Not computed") %>%
+  ungroup %>% 
+  select(estimate, income_range, percentage) %>% 
+  group_by(income_range) %>% 
+  mutate(
+   percentage = case_when(
+      percentage == "Less than 20.0 percent" ~ "No Housing Burden",
+      percentage == "50.0 percent or more" ~ "50% or more",
+      TRUE ~ "30-50% Housing Burden"
+   ),
+    income_range = factor(
+     income_range,
+     levels = c(
+       "Less than $10,000:",
+       "$10,000 to $19,999:",
+       "$20,000 to $34,999:",
+       "$35,000 to $49,999:",
+       "$50,000 to $74,999:",
+       "$75,000 to $99,999:",
+       "$100,000 to $149,999:",
+       "$150,000 or more:"
+     ), 
+     ordered = TRUE
+    )
+  ) %>%
+  group_by(income_range, percentage) %>% 
+  summarize(
+    Number_of_Households = sum(estimate)
+  ) %>% ggplot() +
+  geom_col(aes(x = income_range,
+               y = Number_of_Households, 
+               fill = percentage)) +
+  scale_y_continuous(expand = c(0,0))+
+    labs(
+    x = "Income Range",
+    y = "Number of Households",
+    title = "Owner Occupied Housing Burden Compared to Income Range "
+  ) +
+  theme_classic()+
+  coord_flip()
+  
+  owner_burdens2
+```
+
+
+#By Renter Income
+```{r income renter range analysis, echo=FALSE, warning = F, message = F}
+rent_burdens2 <- rent_burden(2019) %>%
+  filter(percentage != "Not computed") %>%
+  ungroup %>% 
+  select(estimate, income_range, percentage) %>% 
+  group_by(income_range) %>% 
+  mutate(
+   percentage = case_when(
+      percentage == "Less than 20.0 percent" ~ "No Housing Burden",
+      percentage == "50.0 percent or more" ~ "50% or more",
+      TRUE ~ "30-50% Housing Burden"
+   ),
+   income_range = factor(
+     income_range,
+     levels = c(
+       "Less than $10,000:",
+       "$10,000 to $19,999:",
+       "$20,000 to $34,999:",
+       "$35,000 to $49,999:",
+       "$50,000 to $74,999:",
+       "$75,000 to $99,999:",
+       "$100,000 or more:"
+     ), 
+     ordered = TRUE
+   )
+  ) %>% 
+  group_by(income_range, percentage) %>% 
+  summarize(
+    Number_of_Households = sum(estimate)
+  ) %>% ggplot() +
+  geom_col(aes(x = income_range,
+               y = Number_of_Households, 
+               fill = percentage)) +
+  scale_y_continuous(expand = c(0,0))+
+  labs(
+    x = "Income Range",
+    y = "Number of Households",
+    title = "Renter Occupied Housing Burden Compared to Income Range "
+  )+
+  coord_flip()
+rent_burdens2
+```
+
+## Parcel Analysis
+
+#data setup
+```{r exemption data, echo =FALSE, warning = F, message = F}
+epa_exemption <- smc_exemption %>% 
+  mutate(
+    APN = `Parcel Number` %>% 
+      str_replace_all("-","")
+  ) %>% 
+  filter(APN %in% epa_zoning$APN) %>% 
+  left_join(epa_zoning) %>% 
+  # could have instead done right_join
+  st_as_sf() %>%   
+  mutate(
+    Occupant = case_when(
+      Exemption %in% c(5600, 7000) ~ "Owner-occupied",
+      TRUE ~ "Renter-Occupied"
+    ) 
+  ) %>% 
+  filter(New_Zone == "R-LD")
+```
+
+#MAP 1
+```{r 2018/19 owner vs renter occupied map, echo=FALSE, warning = F, message = F}
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = epa_exemption %>% 
+      filter(`Fiscal Year` == "2018/2019"),
+    fillColor = "yellow",
+    color = "black",
+    weight = 0.5
+  ) %>%
+addPolygons(
+  data = epa_exemption %>%
+    filter(`Fiscal Year` == "2018/2019") %>%
+    filter(Exemption %in% c(5600,7000)),
+  fillColor = "blue",
+  color = "black",
+  weight = 0.5,
+  fillOpacity = 1
+) %>% 
+  addControl("2018/2019 Fiscal Year", position = "topright") %>% 
+  addLegend(
+    position = "topright",
+    data = epa_exemption,
+    colors = c("yellow", "blue"),
+    labels = c("Renter Occupied", "Owner Occupied"),
+    title = "Occupant Type"
+  )
+```
+#MAP 2
+```{r 2015/16 owner vs renter occupied map, echo=FALSE, warning = F, message = F}
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = epa_exemption %>% 
+      filter(`Fiscal Year` == "2015/2016"),
+    fillColor = "yellow",
+    color = "black",
+    weight = 0.5
+  ) %>%
+addPolygons(
+  data = epa_exemption %>%
+    filter(`Fiscal Year` == "2015/2016") %>%
+    filter(Exemption %in% c(5600,7000)),
+  fillColor = "blue",
+  color = "black",
+  weight = 0.5,
+  fillOpacity = 1
+) %>% 
+  addControl("2015/2016 Fiscal Year", position = "topright") %>% 
+  addLegend(
+    position = "topright",
+    data = epa_exemption,
+    colors = c("yellow", "blue"),
+    labels = c("Renter Occupied", "Owner Occupied"),
+    title = "Occupant Type"
+  )
+```
+#Plot 1 
+```{r What Types of Occupancy Changes, echo=FALSE, warning = F, message = F}
+epa_working_df <-
+  epa_exemption %>% 
+  st_drop_geometry() %>%
+  select(`Fiscal Year`, `Net Value`, `APN`, Exemption) %>% 
+  mutate(
+    is_owner_occupied = Exemption %in% c(5600, 7000)
+  ) %>%
+  group_by(APN) %>% 
+  arrange(APN,`Fiscal Year`) %>% 
+  mutate(
+    change = case_when(
+      is_owner_occupied & !lag(is_owner_occupied) ~ "renter-to-owner",
+      !is_owner_occupied & lag(is_owner_occupied) ~ "owner-to-renter",
+      TRUE ~ "no-change"
+    )
+  ) %>% 
+  group_by(APN) %>%
+  summarize(
+    n_no_change = sum(change == "no-change"),
+    n_renter_to_owner = sum(change == "renter-to-owner"),
+    n_owner_to_renter = sum(change == "owner-to-renter")
+  ) %>% 
+  ungroup() %>% 
+  summarize(
+    renter_to_owner = sum(n_renter_to_owner),
+    owner_to_renter = sum(n_owner_to_renter),
+    no_change = sum(n_no_change == 4)
+  ) %>% 
+  pivot_longer(
+    everything()
+  ) %>% 
+  ggplot(
+    aes(
+      x = name,
+      y = value,
+      fill = name
+    )
+  ) +
+  geom_bar(
+    stat = "identity"
+  ) +
+  labs(
+    x = "",
+    y = "Total Unit Count",
+    title = "Changes in Occupancy by Resident Type"
+  )+
+  scale_y_continuous(expand = c(0,0))
+epa_working_df
+```
+
+#Plot 2
+```{r value of property renter vs owner occupied plot, echo=FALSE, warning = F, message = F}
+epa_exemption %>% 
+  st_drop_geometry() %>% 
+  filter(Exemption <= 7000) %>% 
+  mutate(
+    Occupant = case_when(
+      Exemption %in% c(5600, 7000) ~ "Owner-occupied",
+      TRUE ~ "Renter-Occupied"
+    )
+  ) %>% 
+  group_by(Occupant, `Fiscal Year`) %>% 
+  summarize(
+    `Net Value` = mean(`Net Value`)
+  ) %>% 
+  ggplot(
+    aes(
+      x = `Fiscal Year`,
+      y = `Net Value`,
+      color = Occupant,
+      group = Occupant
+    )
+  ) +
+    labs(
+    x = "Fiscal Year",
+    y = "Dollar Value",
+    title = "Changes in Property Value by Occupancy Type"
+  )+
+  geom_line()
+```
+
+
+
