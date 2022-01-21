@@ -1,0 +1,35 @@
+---
+title: "week 3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(remotes)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+
+path <- ("/Volumes/GoogleDrive/Shared drives/SFBI/Data Library/NHTS/nhts17-caltrans-tsdc-download/") 
+
+pois <- st_read("/Volumes/GoogleDrive/Shared drives/SFBI/Data Library/OSM/gis_osm_pois_a_free_1.shp")
+
+```
+
+
+```{r}
+survey_household <- read_csv(paste0(path,"survey_household.csv"))
+
+survey_person <- read.csv(paste0(path,"survey_person.csv")) # read_csv() appeared to trigger an error because of a formatting issue, so my second attempt is always the base R version of this function, read.csv(). It generally gives the same result.
+
+survey_trip <- read_csv(paste0(path,"survey_trip.csv"))
+
+survey_person_weights_7day <- read_csv(paste0(path,"survey_person_weights_7day.csv"))
+
+nhts_lookup <- read_excel(
+  paste0(path,"data_elements.xlsx"), 
+  sheet = "Value Lookup"
+)
+```
+

@@ -2,7 +2,6 @@
 title: "Assingment 1"
 output: html_document
 ---
-#setup of data
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
@@ -66,9 +65,8 @@ try <-
 
 ```
 
-##ACS 5 Year Data Analysis
+## ACS 5 Year Data Analysis
 
-#functions
 ```{r processing data function}
 process_census_data <- function(data, labels) {
   data %>%   
@@ -161,7 +159,6 @@ percentage_calculator <- function(df){
 }
 ```
 
-#creation of dfs and charts
 ```{r rent burdens df creation, warning = F, message = F, echo= FALSE}
 rent_burdens <- map(years, rent_burden) %>%
   set_names(years) %>%
@@ -174,9 +171,11 @@ owner_burdens <- map(years, owner_burden) %>%
   bind_rows(.id = "year")
 ```
 
+The intentions of the proposed OPA measure in East Palo Alto (EPA) seems to center around what type of land use the city wants.  Built into the proposition is the assumption that there has been a significant increase in the number of properties in EPA that are being used to generate value for individuals not living in the city.  This is characterized by rental properties that are not owner occupied; in essence the value that these properties generate does not circulate within the city.  
+	The proposed OPA measure gives renters a priority opportunity to purchase properties which keeps high-value, would-be-rental properties owner by members of the EPA community.  Some concerns with the measure is that renters in EPA would not be able to afford the housing burden costs of home ownership in EPA.  To begin my analysis, I will start by using ACS 5 year data to compare the housing burden percentages for these two populations: owner occupied and renter occupied.
+	My first interest is whether there is a trend in either of these populations of higher percentages of housing burden.  To conduct this analysis I totaled the percentages for the ACS 5 year data from each of the last 5 reports (dating back to 2015).  This first bar graph demonstrates that a higher percentage of renters are housing burdened than owners.  While this does not take into account other characteristics of these populations, this comparison may suggest that increasing the owner occupied population in EPA would not necessarily increase the overall housing burdened population in the region.
 
 
-#Plot 1
 ```{r comparison chart, echo=FALSE, warning = F, message = F}
 burden_chart <- rbind(
   percentage_calculator(owner_burdens), 
@@ -202,9 +201,13 @@ burden_chart <- rbind(
 
 burden_chart
 ```
-#Income Bracket Burden Analysis
 
-#By Owner Income
+
+It is important to note that this graph is slightly misleading: each ACS 5 year data set reports the previous 5 years of data.  This means that in the aggregate, data from 2015 is being counted in each year I have plotted.  While this does not necessarily render the results moot, as I am primarily interested in the trend of burden percentages, the changes are largely dampened.  When I take a closer look at the margin of error listed in the ACS 5 year data, I also notice that the ~20% error makes the differences between renter and owner occupied percentages less compelling.  Nonetheless, I think this graph is interesting to include.
+
+## Income Bracket Burden Analysis
+In my second analysis from the ACS 5 year data, I looked at how different income ranges were experiencing housing burden for these two populations.  I grouped housing burden into three categories: no housing burden, 30%-50% housing burdened, and more than 50% housing burdened.  This categories give some sense of extremity i.e. more than 50% housing burdened is a profoundly intense burden.  I was interested in which income brackets had the most housing burden and how that compared between owner occupied properties and renter occupied properties.
+
 ```{r income owner range analysis, echo=FALSE, warning = F, message = F}
 owner_burdens2 <- owner_burden(2019) %>%
   filter(percentage != "Not computed") %>%
@@ -251,8 +254,6 @@ owner_burdens2 <- owner_burden(2019) %>%
   owner_burdens2
 ```
 
-
-#By Renter Income
 ```{r income renter range analysis, echo=FALSE, warning = F, message = F}
 rent_burdens2 <- rent_burden(2019) %>%
   filter(percentage != "Not computed") %>%
@@ -296,9 +297,13 @@ rent_burdens2 <- rent_burden(2019) %>%
 rent_burdens2
 ```
 
+
+In the mid-tier range, from $20,000 to $75,000, it is clear that there are far more renter occupied household experiencing housing burden than owner occupied households.  (Apologies about ordering.  I could not figure out how to edit the ordering of income range) This suggests that middle class renters face far more intense housing burdens than middle class owners in EPA.  An interesting supplementary analysis that I have not included would be to total the extreme housing burden dollar amount across owners in EPA.  This number might give an estimate of how much funding would need to be provided in tandem with the OPA proposal to support owner occupied residents.  This number might indicate how feasible increasing the number of owner occupied units really is.
+
+
 ## Parcel Analysis
 
-#data setup
+
 ```{r exemption data, echo =FALSE, warning = F, message = F}
 epa_exemption <- smc_exemption %>% 
   mutate(
@@ -318,7 +323,9 @@ epa_exemption <- smc_exemption %>%
   filter(New_Zone == "R-LD")
 ```
 
-#MAP 1
+
+Looking more granularity at the parcel zoning data in EPA, we can get a better sense of how the occupancy status of these properties has changed.  To start off, I used housing tax exemption to indicate whether a home was owner occupied and mapped those parcels in blue below. I first did this for the 2018/2019 fiscal year and then recreated that map with th 2015/2016 data.  The maps do not look radically different which indicates that there has not been a dramatic change in the number of properties having a shift in occupant type.  This is perhaps more evident in the following bar plot.  Here the total number of changes in occupants, as well as the type of change, was tallied.  Clearly the vast majority of properties have seen no change in occupancy type.  Nonetheless, of the changes that did occur, nearly twice as many properties went from owner occupied to renter occupied.  This suggests that when properties do change occupant type, far more are being sold to out of city owners that rent out that property (exactly what OPA is seeking to limit).
+
 ```{r 2018/19 owner vs renter occupied map, echo=FALSE, warning = F, message = F}
 leaflet() %>% 
   addProviderTiles(provider = providers$CartoDB.Positron) %>% 
@@ -347,7 +354,7 @@ addPolygons(
     title = "Occupant Type"
   )
 ```
-#MAP 2
+
 ```{r 2015/16 owner vs renter occupied map, echo=FALSE, warning = F, message = F}
 leaflet() %>% 
   addProviderTiles(provider = providers$CartoDB.Positron) %>% 
@@ -376,7 +383,7 @@ addPolygons(
     title = "Occupant Type"
   )
 ```
-#Plot 1 
+ 
 ```{r What Types of Occupancy Changes, echo=FALSE, warning = F, message = F}
 epa_working_df <-
   epa_exemption %>% 
@@ -428,7 +435,8 @@ epa_working_df <-
 epa_working_df
 ```
 
-#Plot 2
+
+While there may be some debate to the urgency of OPA, there is certainly evidence that the trends that the measure is seeking to limit are occurring.  Another interesting metric to consider is the value of these different types of properties.  While properties in EPA increased in value steadily from 2015 to 2019, the final plot demonstrates that renter occupied properties are increasing more quickly than owner occupied properties and have been consistently more valuable.  This trend suggests that there are increasing incentives for out of state property owners to purchase property in EPA to rent out.  Rental properties are generating more value for owners than owner occupied properties consistently which may suggest that OPA is a timely measure.
 ```{r value of property renter vs owner occupied plot, echo=FALSE, warning = F, message = F}
 epa_exemption %>% 
   st_drop_geometry() %>% 
@@ -460,4 +468,4 @@ epa_exemption %>%
 ```
 
 
-
+I want to acknowledge that the Net Value of properties in EPA may be connected to Prop 13.  The sharp increase around 2016 in renter occupied property value may just reflect an increase in number of properties being sold.  As previously demonstrated, the majority of properties that changed ownership type went from owner to renter occupied.  When that happens, Prop 13 would mandate a reassessment of the value of the property.  So if generally there was an increase in the number of properties being sold, since those properties are more likely to see a change in occupancy type from owner to renter, there is naturally going to be an increase in property value for the renter occupied units.  This does not detract from the trend that OPA is seeking to regulate, but does potentially begin to explain how different policies are interacting.
