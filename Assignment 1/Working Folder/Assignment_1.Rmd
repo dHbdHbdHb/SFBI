@@ -13,6 +13,7 @@ library(remotes)
 install_github("yonghah/esri2sf")
 library(esri2sf)
 library(reshape2)
+library(ggthemr)
 
 Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
 
@@ -196,8 +197,8 @@ burden_chart <- rbind(
     y = "Percentage",
     title = "Housing Burden Comparison"
   ) +
-  scale_y_continuous(expand = c(0,0)) +
-  theme_classic()
+  scale_y_continuous(expand = c(0,0)) 
+  ggthemr("dust")
 
 burden_chart
 ```
@@ -248,8 +249,8 @@ owner_burdens2 <- owner_burden(2019) %>%
     y = "Number of Households",
     title = "Owner Occupied Housing Burden Compared to Income Range "
   ) +
-  theme_classic()+
   coord_flip()
+  ggthemr("dust")
   
   owner_burdens2
 ```
@@ -294,11 +295,12 @@ rent_burdens2 <- rent_burden(2019) %>%
     title = "Renter Occupied Housing Burden Compared to Income Range "
   )+
   coord_flip()
+ 
 rent_burdens2
 ```
 
 
-In the mid-tier range, from $20,000 to $75,000, it is clear that there are far more renter occupied household experiencing housing burden than owner occupied households.  (Apologies about ordering.  I could not figure out how to edit the ordering of income range) This suggests that middle class renters face far more intense housing burdens than middle class owners in EPA.  An interesting supplementary analysis that I have not included would be to total the extreme housing burden dollar amount across owners in EPA.  This number might give an estimate of how much funding would need to be provided in tandem with the OPA proposal to support owner occupied residents.  This number might indicate how feasible increasing the number of owner occupied units really is.
+In the mid-tier range, from $20,000 to $75,000, it is clear that there are far more renter occupied household experiencing housing burden than owner occupied households This suggests that middle class renters face far more intense housing burdens than middle class owners in EPA.  An interesting supplementary analysis that I have not included would be to total the extreme housing burden dollar amount across owners in EPA.  This number might give an estimate of how much funding would need to be provided in tandem with the OPA proposal to support owner occupied residents.  This number might indicate how feasible increasing the number of owner occupied units really is.
 
 
 ## Parcel Analysis
@@ -431,7 +433,8 @@ epa_working_df <-
     y = "Total Unit Count",
     title = "Changes in Occupancy by Resident Type"
   )+
-  scale_y_continuous(expand = c(0,0))
+  scale_y_continuous(expand = c(0,0))+
+  theme_classic()
 epa_working_df
 ```
 
