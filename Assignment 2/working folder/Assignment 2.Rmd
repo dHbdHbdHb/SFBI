@@ -245,7 +245,7 @@ knitr::kable(table_mode_preference %>%
                select(mode, mode_value, mode_reasonable), 
                col.names = mode_header,
                align = "lcc",
-               caption = "List of Transportation Modes and Ranks",
+               caption = "List of Transportation Modes and Ranks:",
                )
 
 ```
@@ -275,7 +275,7 @@ table_amenity_preference <- amenity_preference %>%
 knitr::kable(table_amenity_preference %>% select(amenity, amenity_value, amenity_quantity),
              col.names = amenity_header, 
              align = "lcc", 
-             caption = "List of Amenities and Values"
+             caption = "List of Amenities and Values:"
              )
 ```
 
@@ -380,7 +380,10 @@ complete_map_large <- complete_large %>%
   cbind(readRDS("sf_cbgs.rds") %>% select(GEOID)) %>% 
   st_as_sf() 
 
-mapview(complete_map_large, zcol = "total")
+mapview(complete_map_large,
+        zcol = "total",
+        at = seq(0, 3.5, 0.5)
+        )
 ```
 
 Observable here is that most of S.F. meets my standards with the exception of the two southwest and southeast corners of the city.  This map aggregates all modes of transportation and assumes that residents would have access to walking, biking, and driving.  Regardless of whether or not that is true, I have already mentioned that I want to minimize driving in urban environments.  There are a number of reasons for this, but one basic issue is that many residents cannot afford a personal vehicle.  In California, AAA estimates the annual cost of car ownership to be in the range of $6,000 to $11,000. Looking at the median income of neighborhoods in S.F. this can be as much as a quarter of annual income for some residents.  Compounded with already extreme housing burden rates within the city and this sort of expense seems increasingly untenable.
@@ -395,21 +398,31 @@ complete_map_large_nodriving <- complete_large_nodriving %>%
   ) %>% 
   cbind(readRDS("sf_cbgs.rds") %>% select(GEOID)) %>% 
   st_as_sf() 
-mapview(complete_map_large_nodriving, zcol = "total")
+mapview(complete_map_large_nodriving, 
+        zcol = "total",
+        at = seq(0, 3.5, 0.5)
+        )
 ```
 
 This marginal decrease begs the question how walking and biking then contribute to this completeness score.  What is interesting is that even though walking receives a generous ranking in my initial tables, a city without any biking or driving sees many more neighborhoods isolated from amenities with sub 1 completeness scores.
 
 ```{r echo=FALSE}
-mapview(complete_map_large, zcol = "walking") 
+mapview(complete_map_large, 
+        zcol = "walking",
+        at = seq(0, 3.5, 0.5)
+        ) 
 ```
 
 Looking at a map of just biking accessibility sees significantly greater completeness scoring –even though I assigned a low bike ranking weight of 0.3.   With a slightly increased ranking every neighborhood in the city could quickly see a full completeness score.  This is particularly compelling when considering that the average annual ownership cost of a bike is around $350. This may suggest that the city would be wise to invest more into making this mode of transportation more preferable.  Potentially, at relatively low cost, the city could radically improve the accessibility of amenities and the overall completeness of all neighborhoods.
 
 ```{r}
-mapview(complete_map_large, zcol = "cycling")
+mapview(complete_map_large, 
+        zcol = "cycling",
+        at = seq(0, 3.5, 0.5)
+        )
 ```
 
-Regardless, some interesting conclusions that can be drawn from this analysis is that perhaps there are some low hanging fruits in improving the completeness of S.F. neighborhoods.  Increasing the more residents’ inclination to bike is potentially a cost effective way to build better neighborhoods. 
+The final step of this analysis would be to introduce public transportation.  It would be interesting to see how the cost of comprehensive, desirable public transport would compare to the cost of improving community access to biking.  This is certainly not to pit the MUNI budget against that of the SFMTA bike planning department; there are still many interesting considerations like biking plus public transit (i.e. putting a bike on the front of a bus). Integrated modes of transit present promising opportunities to build better community completeness.  Additionally it is important to consider that many residents in a city are not physically able to bike, and investment in public transportation perhaps better serves a general population.  Also, much of these specific scores are a product of assumptions I made in the value decay formula.  By squaring the factor in the transportation score function, I am producing much higher completeness scores than had I used the same computation from the amenity value decay.
 
-The final step of this analysis would be to compare to public transportation.  It would be interesting to see how the cost of comprehensive, desirable public transport would compare to access from biking.  This is certainly not to pit the MUNI budget against that of the SFMTA bike planning department; there are still many interesting considerations like biking plus public transit (i.e. putting a bike on the front of a bus) and how could affect completeness.  Additionally it is important to consider that many residents in a city are not able to bike, and investment in public transportation better serves that population.  Also, much of these specific scores are a product of assumptions I made in the value decay formula.  By squaring the factor in the transportation score function, I am producing much higher completeness scores than had I used the same computation from the amenity value decay.
+Regardless, some interesting conclusions that can be drawn from this analysis. There seem to be some low hanging fruit in improving the completeness of S.F. neighborhoods.  Increasing residents’ inclination to bike is potentially a cost effective way to build better neighborhoods. 
+
