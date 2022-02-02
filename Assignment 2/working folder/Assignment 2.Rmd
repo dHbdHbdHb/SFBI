@@ -36,14 +36,14 @@ sf_boundary <- counties("CA", cb =TRUE) %>%
   st_transform(st_crs(pois))
 ```
 
-```{r eval=FALSE, include=FALSE}
+```{r tract function, eval=FALSE, include=FALSE}
 sf_tract_select <- function(tractID){
   tracts("CA", "San Francisco", cb = TRUE) %>% 
     filter(TRACTCE == tractID)
 } 
 ```
 
-```{r eval=FALSE, include=FALSE}
+```{r create all cbgs, eval=FALSE, include=FALSE}
 create_cbgs <- function(tractID){
   visitiacion_valley_cbgs <- block_groups("CA", "San Francisco") %>% 
   st_centroid() %>% 
@@ -55,13 +55,10 @@ create_cbgs <- function(tractID){
 
 sf_tractIDs <- sf_neighborhoods$TRACTCE10
 many_cbgs <- map_dfr(sf_tractIDs, create_cbgs)
-```
-
-```{r eval=FALSE, include=FALSE}
 saveRDS(many_cbgs, "sf_cbgs.rds")
 ```
 
-```{r selecting amenities, include=FALSE}
+```{r select amenities, include=FALSE}
 sf_pois <- pois %>% 
   .[sf_boundary,] %>% 
   rename(amenity = fclass)
@@ -85,7 +82,7 @@ sf_pois_filter <- sf_pois %>%
 saveRDS(sf_pois_filter, "sf_pois.rds")
 ```
 
-```{r only use this when trying to recreate isochrones, eval=FALSE, include=FALSE}
+```{r isochrone creation function, eval=FALSE, include=FALSE}
 isochrone_creation <- function(transmode, cbg){
   mb_isochrone(
       cbg,
@@ -108,6 +105,10 @@ saveRDS(large_isochrone, "large_isochrone.rds")
 ```
 
 ```{r public transit isochrone creation, eval=FALSE, include=FALSE}
+
+# I didn't finish this section, but would like to in my resubmission.  It got 
+# messier than I thought it would so have just the bare bones for the future here.
+
 isochrones <- readRDS("small_isochrone.rds")
 isochrones_walking <- isochrones %>% 
   filter(mode == "walking")
@@ -140,13 +141,13 @@ isochrones_firstmile <- isochrones_walking %>%
 raptor <- raptor(
 ```
 
-```{r mapbox isochrone, eval=FALSE, include=FALSE}
+```{rcreate my raw data frame, eval=FALSE, include=FALSE}
 
 sf_pois_filter <- readRDS("sf_pois.rds")
 
 access_raw_large <- readRDS("large_isochrone.rds") %>% 
   st_make_valid() %>% 
-  st_join(sf_pois_filter) %>%    #this will put all the mapbox data together wooohoo
+  st_join(sf_pois_filter) %>%
   st_drop_geometry() %>% 
   filter(!is.na(osm_id))
 
@@ -162,8 +163,7 @@ I have attempted to create an analysis of San Francisco that reveals which neigh
 I will start this discussion by defining what modes of transportation are most important.  Using isochrone data for walking, biking, and driving, I can get a pretty good idea about how far an individual from a given census block can get by each mode of transportation.  To do this, I use the centroid of each census block group in the city as starting points.  This is useful in giving me an accessible range for each mode of transportation from which I can then attach a ranking value.  In the following table, there are two categories: “Rank” and “Reasonable Trip Time.”  Together, these capture what mode of transportation is most preferred in an urban environment and what sorts of travel times individuals would typically be comfortable with for each respective mode.  The ranking values are defined largely on my personal preferences, but could be informed by the proportion of all trips in S.F. for each mode of transportation.  This would be interesting in describing ‘how preferences actually are’, but do not reflect ‘how preferences could be.’  I use my personal preferences to define these values to de-emphasize driving within the city.  I think this is important because in my ideal urban environment, there are as few personal car trips as possible.
 
 
-
-```{r rank integration, echo=FALSE, message=FALSE, warning=FALSE}
+```{r rank and value integration, echo=FALSE, message=FALSE, warning=FALSE}
 amenity_preference <- data.frame(
   amenity = c(
     "park",
@@ -371,7 +371,7 @@ complete_large_nodriving <- rbind(
 ```
 
 
-```{r echo=FALSE}
+```{r complete map with all modes, echo=FALSE}
 complete_map_large <- complete_large %>% 
   pivot_wider(
     names_from = "mode",
@@ -390,7 +390,7 @@ Observable here is that most of S.F. meets my standards with the exception of th
 
 
 With this in mind, I want to recreate this map without considering the accessibility from private vehicles.  Without the contribution of driving access, the updated completeness scores are slightly reduced.  
-```{r echo=FALSE}
+```{r complete map without driving, echo=FALSE}
 complete_map_large_nodriving <- complete_large_nodriving %>% 
   pivot_wider(
     names_from = "mode",
@@ -406,7 +406,7 @@ mapview(complete_map_large_nodriving,
 
 This marginal decrease begs the question how walking and biking then contribute to this completeness score.  What is interesting is that even though walking receives a generous ranking in my initial tables, a city without any biking or driving sees many more neighborhoods isolated from amenities with sub 1 completeness scores.
 
-```{r echo=FALSE}
+```{r map of walking scores, echo=FALSE}
 mapview(complete_map_large, 
         zcol = "walking",
         at = seq(0, 3.5, 0.5)
@@ -415,7 +415,7 @@ mapview(complete_map_large,
 
 Looking at a map of just biking accessibility sees significantly greater completeness scoring –even though I assigned a low bike ranking weight of 0.3.   With a slightly increased ranking every neighborhood in the city could quickly see a full completeness score.  This is particularly compelling when considering that the average annual ownership cost of a bike is around $350. This may suggest that the city would be wise to invest more into making this mode of transportation more preferable.  Potentially, at relatively low cost, the city could radically improve the accessibility of amenities and the overall completeness of all neighborhoods.
 
-```{r}
+```{r map of biking scores, echo=FALSE}
 mapview(complete_map_large, 
         zcol = "cycling",
         at = seq(0, 3.5, 0.5)
