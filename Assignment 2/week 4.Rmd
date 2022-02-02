@@ -1,0 +1,257 @@
+---
+title: "week 4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(censusapi)
+library(mapview)
+library(leaflet)
+library(mapboxapi)
+```
+
+Load from shared drive
+
+```{r}
+pois <- st_read("/Volumes/GoogleDrive/Shared drives/SFBI/Data Library/OSM/gis_osm_pois_a_free_1.shp")
+```
+
+```{r}
+pois_summary <- pois %>% 
+  st_drop_geometry() %>% 
+  group_by(fclass) %>% 
+  count() %>% 
+  arrange(desc(n))
+
+pois_summary
+```
+
+```{r}
+smc_boundary <- counties("CA", cb = T) %>% 
+  filter(NAME == "San Mateo") %>% 
+  st_transform(st_crs(pois))
+
+# will take longer but handles larger POIs better
+smc_pois <- pois %>% 
+  .[smc_boundary,] %>% 
+  rename(amenity = fclass)
+
+# faster
+smc_pois <- pois %>% 
+  st_centroid() %>% 
+  .[smc_boundary,] %>% 
+  rename(amenity = fclass)
+```
+
+```{r}
+mapview(smc_pois, zcol = "amenity")
+```
+
+```{r}
+pois_filter <- pois %>% 
+  rename(amenity = fclass) %>% 
+  filter(amenity %in% c(
+    "park",
+    "convenience",
+    "restaurant",
+    "supermarket",
+    "library"
+  ))
+
+mapview(pois_filter, zcol = "amenity")
+```
+
+```{r}
+saveRDS(pois_filter, "pois_filter.rds")
+pois_filter <- readRDS("pois_filter.rds")
+```
+
+```{r}
+smc_cbgs <- block_groups("CA","San Mateo")
+```
+
+```{r} 
+nfo_boundary <- places("CA", cb = TRUE) %>% 
+  filter(NAME == "North Fair Oaks")
+
+nfo_cbgs <- smc_cbgs %>% 
+  st_centroid() %>% 
+  .[nfo_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(smc_cbgs %>% select(GEOID)) %>% 
+  st_as_sf()
+
+mapview(nfo_cbgs)
+```
+```{r}
+saveRDS(nfo_cbgs, "nfo_cbgs.rds")
+nfo_cbgs <- readRDS("nfo_cbgs.rds")
+```
+
+```{r}
+isochrones <- c("walking","driving") %>% 
+  map_dfr(function(x){
+    mb_isochrone(
+      nfo_cbgs,
+      profile = x,
+      time = c(5,10,15)
+    ) %>% 
+      mutate(mode = x)
+    
+  })
+```
+```{r}
+saveRDS(isochrones, "nfo_isochrones.rds")
+isochrones <- readRDS("nfo_isochrones.rds")
+```
+
+```{r}
+access_raw <- isochrones %>% 
+  st_make_valid() %>%
+  st_join(pois_filter) %>% 
+  filter(!is.na(osm_id)) %>% 
+  st_drop_geometry() %>% 
+  filter(!is.na(osm_id))
+
+
+isochrones %>% mapview()
+``` 
+
+```{r}
+amenity_preference <- data.frame(
+  amenity = c(
+    "park",
+    "convenience",
+    "restaurant",
+    "supermarket",
+    "library"
+  ),
+  amenity_value = c(
+    0.8,
+    0.6,
+    0.25,
+    1,
+    0.7
+  ),
+  amenity_quantity = c(
+    2,
+    5,
+    30,
+    1,
+    1
+  )
+) %>% 
+  mutate(
+    amenity_decay = -log(0.5)/(amenity_quantity)
+  )
+
+mode_preference <- data.frame(
+  mode = c(
+    "walking",
+    "biking",
+    "driving"
+  ),
+  mode_value = c(
+    1,
+    0.7,
+    0.5
+  ),
+  mode_reasonable = c(
+    15,
+    10,
+    20
+  )
+) %>% 
+  mutate(
+    mode_decay = -log(0.5)/mode_reasonable
+  )
+``` 
+
+```{r}
+complete_baseline <- data.frame(
+  amenity = amenity_preference$amenity %>% 
+    rep(amenity_preference$amenity_quantity)
+) %>% 
+  left_join(
+    amenity_preference,
+    by = "amenity"
+  ) %>% 
+  group_by(amenity) %>% 
+  mutate(
+    amenity_rank = row_number() - 1
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * 0.5 #* mode_preference
+  )
+
+baseline_score <- sum(complete_baseline$score)
+```
+
+
+```{r}
+complete_temp <- access_raw %>% 
+  left_join(
+    amenity_preference,
+    by = "amenity"
+  ) %>% 
+  left_join(
+    mode_preference,
+    by = "mode"
+  ) %>% 
+  group_by(id, mode, amenity) %>% 
+  arrange(time) %>% 
+  mutate(
+    amenity_rank = row_number() - 1
+  ) %>% 
+  ungroup() %>% 
+  
+```
+
+```{r}
+complete_modes <- complete_temp %>% 
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * exp(-time * mode_decay) # * mode_value ->this is explained like 30 min into lecture
+  ) %>% 
+  group_by(id, mode) %>% 
+  arrange(desc(score)) %>% 
+  filter(!duplicated(osm_id)) %>% 
+  summarize(
+    score = sum(score, na.rm = T)/baseline_score
+  )
+```
+
+```{r}
+complete_total <- complete_temp %>% 
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * mode_value * exp(-time * mode_decay)
+  ) %>% 
+  group_by(id) %>% 
+  arrange(desc(score)) %>% 
+  filter(!duplicated(osm_id)) %>% 
+  summarize(
+    score = sum(score, na.rm = T)/baseline_score
+  ) %>% 
+  mutate(
+    mode = "total"
+  ) %>% 
+  rbind(complete_modes)
+
+complete_map <- complete_total %>% 
+  pivot_wider(
+    names_from = "mode",
+    values_from = "score"
+  ) %>% 
+  cbind(nfo_cbgs %>% select(GEOID)) %>% 
+  st_as_sf()
+
+mapview(complete_map, zcol = "total")
+```
+
