@@ -386,7 +386,7 @@ mapview(complete_map_large,
         )
 ```
 
-Observable here is that most of S.F. meets my standards with the exception of the two southwest and southeast corners of the city.  This map aggregates all modes of transportation and assumes that residents would have access to walking, biking, and driving.  Regardless of whether or not that is true, I have already mentioned that I want to minimize driving in urban environments.  There are a number of reasons for this, but one basic issue is that many residents cannot afford a personal vehicle.  In California, AAA estimates the annual cost of car ownership to be in the range of $6,000 to $11,000. Looking at the median income of neighborhoods in S.F. this can be as much as a quarter of annual income for some residents.  Compounded with already extreme housing burden rates within the city and this sort of expense seems increasingly untenable.
+Observable here is that most of S.F. meets my standards with the exception of the two southwest and southeast corners of the city.  This map aggregates all modes of transportation and assumes that residents would have access to walking, biking, and driving.  Regardless of whether or not that is true, I have already mentioned that I want to minimize driving in urban environments.  There are a number of reasons for this, but one basic issue is that many residents cannot afford a personal vehicle.  In California, [AAA estimates](https://www.aaa.com/autorepair/articles/average-annual-cost-of-new-vehicle-ownership) the annual cost of car ownership to be in the range of $6,000 to $11,000. Looking at the median income of neighborhoods in S.F. this can be as much as a quarter of annual income for some residents.  Compounded with already extreme housing burden rates within the city and this sort of expense seems increasingly untenable.
 
 
 With this in mind, I want to recreate this map without considering the accessibility from private vehicles.  Without the contribution of driving access, the updated completeness scores are slightly reduced.  
@@ -413,7 +413,7 @@ mapview(complete_map_large,
         ) 
 ```
 
-Looking at a map of just biking accessibility sees significantly greater completeness scoring –even though I assigned a low bike ranking weight of 0.3.   With a slightly increased ranking every neighborhood in the city could quickly see a full completeness score.  This is particularly compelling when considering that the average annual ownership cost of a bike is around $350. This may suggest that the city would be wise to invest more into making this mode of transportation more preferable.  Potentially, at relatively low cost, the city could radically improve the accessibility of amenities and the overall completeness of all neighborhoods.
+Looking at a map of just biking accessibility sees significantly greater completeness scoring –even though I assigned a low bike ranking weight of 0.3.   With a slightly increased ranking every neighborhood in the city could quickly see a full completeness score.  This is particularly compelling when considering that the average annual ownership cost of a bike is [around $350](https://www.treehugger.com/how-much-does-it-cost-to-commute-by-bike-4858452). This may suggest that the city would be wise to invest more into making this mode of transportation more preferable.  Potentially, at relatively low cost, the city could radically improve the accessibility of amenities and the overall completeness of all neighborhoods.
 
 ```{r map of biking scores, echo=FALSE}
 mapview(complete_map_large, 
