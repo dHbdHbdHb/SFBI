@@ -156,7 +156,7 @@ saveRDS(access_raw_large, "access_raw_large.rds")
 ### Complete Community Analysis
 
 
-When we talk about access in urban planning, we must consider both the what and the how.  Freedom of movement, especially in densely populated cities, is essential for a complete community.  Investigating whether people can easily move (either via foot, bike, or public transit) and access essential amenities is the purpose of the following work.  
+When we talk about access in urban planning, we must consider both the what and the how.  Freedom of movement, especially in densely populated cities, is essential for a complete community.  Investigating whether people can easily move (via foot, bike, or public transit) and access essential amenities is the purpose of the following work.  
 
 I have attempted to create an analysis of San Francisco that reveals which neighborhoods (defined by census block groups) have access to core amenities.  Deciding what types of amenities that are essential to vibrant urban life is somewhat subjective, but I will justify my specific selections based on urban design principles being actualized in cities around the country.  Core to my proposal is the idea that improved bicycle infrastructure could be a leverage point in improving the “completeness” of neighborhoods in S.F.
 
@@ -424,5 +424,5 @@ mapview(complete_map_large,
 
 The final step of this analysis would be to introduce public transportation.  It would be interesting to see how the cost of comprehensive, desirable public transport would compare to the cost of improving community access to biking.  This is certainly not to pit the MUNI budget against that of the SFMTA bike planning department; there are still many interesting considerations like biking plus public transit (i.e. putting a bike on the front of a bus). Integrated modes of transit present promising opportunities to build better community completeness.  Additionally it is important to consider that many residents in a city are not physically able to bike, and investment in public transportation perhaps better serves a general population.  Also, much of these specific scores are a product of assumptions I made in the value decay formula.  By squaring the factor in the transportation score function, I am producing much higher completeness scores than had I used the same computation from the amenity value decay.
 
-Regardless, some interesting conclusions that can be drawn from this analysis. There seem to be some low hanging fruit in improving the completeness of S.F. neighborhoods.  Increasing residents’ inclination to bike is potentially a cost effective way to build better neighborhoods. 
+Regardless, some interesting conclusions can be drawn from this analysis. There seem to be some low hanging fruit in improving the completeness of S.F. neighborhoods.  Increasing residents’ inclination to bike is potentially a cost effective way to build better neighborhoods. 
 
