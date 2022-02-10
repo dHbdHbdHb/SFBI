@@ -1,0 +1,212 @@
+---
+title: "week 5"
+output: html_document
+---
+
+```{r}
+setwd("~/Documents/GitHub/SFBI/Assignment 3")
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+devtools::install_github("jamgreen/lehdr")
+
+library(lehdr)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(leaflet)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+
+```{r}
+ca_od_read <- read_csv("/Volumes/GoogleDrive/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_2019.csv.gz")
+```
+
+```{r}
+zctas <- zctas()
+
+zip <- zctas %>% 
+  filter(GEOID10 == "94127")
+
+blocks <- blocks("CA")
+
+zip_blocks <- blocks %>% 
+  st_centroid() %>% 
+  .[zip, ]
+
+zip_od <- ca_od_read %>% 
+  filter(
+    h_geocode %in% zip_blocks$GEOID10 |
+      w_geocode %in% zip_blocks$GEOID10
+  )
+```
+
+```{r}
+saveRDS(zip, "zip.rds")
+saveRDS(zip_blocks, "zip_blocks.rds")
+saveRDS(zip_od, "zip_od.rds")
+```
+
+
+```{r}
+full_zip_od <- 2013:2019 %>% 
+  map_dfr(function(year){
+    
+    print(year)
+    
+    temp <- read_csv(paste0("/Volumes/GoogleDrive/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_", year, ".csv.gz")) %>% 
+      filter(
+        h_geocode %in% zip_blocks$GEOID10 |
+          w_geocode %in% zip_blocks$GEOID10
+      ) %>% 
+      mutate(year = year)
+    
+    saveRDS(temp, paste0("temp_od_", year, ".rds"))
+    
+    return(temp)
+    
+  })
+```
+
+```{r}
+saveRDS(full_zip_od, "94127_full_zip_od.rds")
+```
+
+```{r}
+full_zip_od <- readRDS("94127_full_zip_od.rds")
+zip_blocks <- readRDS("zip_blocks.rds")
+
+full_zip_od_clean <- full_zip_od %>% 
+  select(-createdate) %>% 
+  filter(!(
+    h_geocode %in% zip_blocks$GEOID10 &
+      w_geocode %in% zip_blocks$GEOID10
+  )) %>%
+  mutate(
+    direction = ifelse(
+      h_geocode %in% zip_blocks$GEOID10,
+      "outbound",
+      "inbound"
+    )
+  )
+
+```
+
+```{r}
+code_pairs <- full_zip_od_clean %>%
+  ungroup() %>%
+  distinct(w_geocode, h_geocode) %>%
+  mutate(
+    pairs = map2(w_geocode, h_geocode, c),
+    pair_code = map_chr(pairs, ~ sort(.x) %>% str_c(collapse = "_"))
+  )
+```
+
+
+```{r}
+mapbox_call_dataset <- full_zip_od_clean %>%
+  mutate(
+    start = pmin(h_geocode,w_geocode),
+    end = pmax(h_geocode,w_geocode)
+  ) %>% 
+  filter(!duplicated(paste(start,end)))
+```
+
+```{r}
+code_pairs <- full_zip_od_clean %>% 
+  distinct(w_geocode, h_geocode)
+  
+# code_pairs %>%
+#   distinct(pair_code, .keep_all = TRUE)
+```
+
+```{r}
+trunc_geocode <- function(df, n_digits) {
+  df %>%
+    mutate(
+      w_geocode = str_trunc(w_geocode, n_digits, side = "right", ellipsis = ""),
+      h_geocode = str_trunc(h_geocode, n_digits, side = "right", ellipsis = "")
+    ) %>%
+    distinct(w_geocode, h_geocode) %>%
+    nrow()
+}
+map_int(1:16, ~ trunc_geocode(full_zip_od_clean, .x)) %>%
+  enframe()
+```
+
+```{r}
+full_zip_od_clean %>%
+  count(h_geocode) %>%
+  arrange(desc(n))
+```
+
+```{r}
+full_zip_od_clean %>%
+  count*
+```
+
+```{r}
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+```
+
+
+##~~~~~~~~~~
+
+```{r}
+full_zip_od_routing <- full_zip_od_clean %>% 
+  mutate(
+    origin = ifelse(   # this is an interesting step that I should review a little bit more
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = origin %>%  substr(1,12), #this is moving up to cbg
+    tract = origin %>%  substr(1,11)
+  ) %>% 
+  filter(!duplicated(paste(origin))) %>% 
+  filter(!duplicated(paste(tract))) 
+# this is cool and how to reduce to either tract or cbg granula
+  
+```
+
+```{r}
+ca_tracts <-tracts("CA")
+```
+
+```{r}
+zip_od_origin <- 
+  full_zip_od_routing %>% 
+  select(tract) %>% 
+  left_join(ca_tracts %>%  select(tract = GEOID)) %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_coordinates()
+```
+
+```{r}
+zip <- something like my own zip code dataframe
+
+zip_od_destination <- 
+  zip %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_coordinates()
+```
+
+```{r}
+zip_od_route <- #check the documentation for the chapter
+  
+  
+
+
+```
+
