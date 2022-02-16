@@ -647,10 +647,16 @@ normalized_building_emissions %>%
     )
   ) +
   geom_line(aes(color = line_group)) +
+  scale_y_continuous(labels = scales::label_percent()) +
+  scale_colour_discrete(
+    name = "Consumption Type",
+    labels = c("Commercial Electricity", "Commercial Gas", "Residential Electricity","Residential Gas")
+  ) +
   labs(
     x = "Year",
     y = "tCO2e/Population/Degree Differential",
-    title = "94127 Annual Energy Usage Normalized by Intensity, 2013 to 2019"
+    title = "94127 Annual Energy Usage Normalized by Intensity, 2013 to 2019",
+    # legend = c("Commercial Electricity", "Commercial Gas", "Residential Electricity","Residential Gas" )
   ) +
   theme_minimal()
 ```
