@@ -1,0 +1,668 @@
+---
+title: "Assignment 3"
+output: html_document
+---
+
+```{r include=FALSE}
+setwd("~/Documents/GitHub/SFBI/Assignment 3/working folder")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+devtools::install_github("jamgreen/lehdr")
+
+library(lehdr)
+library(tidyverse)
+library(tidytransit)
+library(remotes)
+library(sf)
+library(censusapi)
+library(tigris)
+library(leaflet)
+library(readxl)
+library(mapboxapi)
+library(mapview)
+
+(tigris_use_cache <- FALSE)
+
+Sys.setenv(CENSUS_KEY = "c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+```{r eval=FALSE, include=FALSE}
+ca_od_read <- read_csv("/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_2019.csv.gz")
+```
+
+
+```{r eval=FALSE, include=FALSE}
+zctas <- zctas()
+blocks <- blocks("CA")
+```
+
+```{r eval=FALSE, include=FALSE}
+zip_94127 <- zctas %>%
+  filter(GEOID10 == "94127")
+
+zip_blocks_94127 <- blocks %>%
+  st_centroid() %>%
+  .[zip_94127, ]
+```
+
+```{r eval=FALSE, include=FALSE}
+zip_od_94127 <- ca_od_read %>%
+  filter(
+    h_geocode %in% zip_blocks_94127$GEOID10 |
+      w_geocode %in% zip_blocks_94127$GEOID10
+  )
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(zip_94127, "zip_94127.rds")
+saveRDS(zip_blocks_94127, "zip_blocks_94127.rds")
+saveRDS(zip_od_94127, "zip_od_94127.rds")
+```
+
+```{r eval=FALSE, include=FALSE}
+zip_blocks_94127 <- readRDS("zip_blocks_94127")
+
+full_zip_od_94127 <- 2013:2019 %>%
+  map_dfr(function(year) {
+    print(year)
+
+    temp <- read_csv(paste0("/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_", year, ".csv.gz")) %>%
+      filter(
+        h_geocode %in% zip_blocks_94127$GEOID10 |
+          w_geocode %in% zip_blocks_94127$GEOID10
+      ) %>%
+      mutate(year = year)
+
+    saveRDS(temp, paste0("temp_od_", year, ".rds"))
+
+    return(temp)
+  })
+saveRDS(full_zip_od_94127, "full_zip_od_94127.rds")
+```
+
+```{r include=FALSE}
+full_zip_od_94127 <- readRDS("full_zip_od_94127.rds")
+zip_blocks_94127 <- readRDS("zip_blocks_94127.rds")
+
+full_zip_od_94127_clean <- full_zip_od_94127 %>%
+  select(-createdate) %>%
+  filter(!(
+    h_geocode %in% zip_blocks_94127$GEOID10 &
+      w_geocode %in% zip_blocks_94127$GEOID10
+  )) %>%
+  mutate(
+    direction = ifelse(
+      h_geocode %in% zip_blocks_94127$GEOID10,
+      "outbound",
+      "inbound"
+    )
+  )
+saveRDS(full_zip_od_94127_clean, "full_zip_od_94127_clean.rds")
+```
+
+```{r include=FALSE}
+mapbox_call_dataset_94127 <- full_zip_od_94127_clean %>%
+  mutate(
+    start = pmin(h_geocode, w_geocode),
+    end = pmax(h_geocode, w_geocode),
+    origin = ifelse( # this is an interesting step that I should review a little bit more
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = origin %>% substr(1, 12), # this is moving up to cbg
+    tract = origin %>% substr(1, 11)
+  ) %>%
+  filter(!duplicated(paste(start, end))) %>%
+  filter(!duplicated(paste(origin))) %>%
+  filter(!duplicated(paste(tract)))
+```
+
+```{r include=FALSE}
+tract_job_counts <- full_zip_od_94127_clean %>%
+  mutate(
+    start = pmin(h_geocode, w_geocode),
+    end = pmax(h_geocode, w_geocode),
+    origin = ifelse( # this is an interesting step that I should review a little bit more
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = origin %>% substr(1, 12), # this is moving up to cbg
+    tract = origin %>% substr(1, 11)
+  ) %>%
+  group_by(tract) %>%
+  summarise(n_jobs = sum(S000))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+zip_94127 <- readRDS("zip_94127.rds")
+
+ca_tracts <- tracts("CA")
+
+zip_od_origin_94127 <-
+  mapbox_call_dataset_94127 %>%
+  select(tract) %>%
+  left_join(ca_tracts %>% select(tract = GEOID)) %>%
+  st_as_sf() %>%
+  st_centroid() %>%
+  st_coordinates()
+
+zip_od_destination_94127 <-
+  zip_94127 %>%
+  st_centroid() %>%
+  st_coordinates()
+```
+
+```{r eval=FALSE, include=FALSE}
+zip_od_route_94127 <-
+  1:ceiling(nrow(zip_od_origin_94127) / 1000) %>%
+  map_dfr(function(y) {
+    print(y)
+
+    temp <- (y * 1000 - 999):pmin(y * 1000, nrow(zip_od_origin_94127)) %>%
+      map_dfr(function(x) {
+        tryCatch(
+          mb_directions(
+            origin = zip_od_origin_94127[x, ],
+            destination = zip_od_destination_94127,
+            profile = "driving-traffic"
+          ) %>%
+            mutate(id = x),
+          error = function(e) {
+            data.frame(id = x)
+          }
+        )
+      }) %>%
+      st_as_sf()
+
+    saveRDS(temp, paste0("temp", y, ".rds"))
+
+    return(temp)
+  })
+```
+
+```{r}
+
+```
+
+
+```{r include=FALSE}
+zip_od_route_94127 <- 1:4 %>%
+  map_df(function(x) {
+    readRDS(paste0("temp", x, ".rds"))
+  })
+
+
+full_zip_od_routed_94127 <- mapbox_call_dataset_94127 %>%
+  cbind(zip_od_route_94127)
+
+full_zip_od_final_94127 <- full_zip_od_94127_clean %>%
+  mutate(
+    origin = ifelse(
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    tract = substr(origin, 1, 11)
+  ) %>%
+  left_join(
+    full_zip_od_routed_94127 %>%
+      select(cbg, duration, distance, tract),
+    by = "tract"
+  ) %>% 
+  filter(duration < 160) %>% # looking at only trips under 3 hours) %>%
+  mutate(
+    visits = if_else(duration < 100,
+      S000 * 261, # annual work days
+      S000 * 130,
+    ),
+    # number of work days annually,
+    vmt = visits * distance*2 # 2 trips a day per job
+  )
+
+saveRDS(full_zip_od_final_94127, ("full_zip_od_final_94127.rds"))
+```
+
+The zip code that I live in is largely residential.  Though technically in San Francisco,
+my neighborhood primarily consists of single family homes with a few commercial stretches
+of groceries or other stores.  In calculating the GHG emissions for this zip code,
+I would expect that the majority of emissions are generated from commuters leaving the
+neighborhood on a daily basis.  In my transportation GHG calculation, I also 
+include the trips that commute into the zip code.  This is where I start my 
+analysis: I imported Census LODES job data to filter down all the jobs that fit these 
+conditions (i.e. commuting in or out of my zip code, 94127).  I looked at home and
+work geocodes and did not include any pairs where both job and home were in 94127.
+The reasoning being that these trips contributed a negligible amount of Vehicle Miles
+Traveled (VMTs) and complicated the analysis.
+
+I generated trip geometries from the MapboxAPI and plotted all commute times here:
+
+```{r echo=FALSE}
+
+
+leaflet() %>%
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>%
+  addPolylines(
+    data = zip_od_route_94127 %>%
+      filter(
+        duration < 120 # looking at only trips under 2 hours
+      ) 
+  )
+```
+
+
+Initially this map included trips across the entire state; this is likely due to
+residents in this zip code having business registered in other parts of the state.
+Had my I included zips nationwide, I would expect to have trips coming from across
+the country.  To control for these outlier trips (which would significantly skew the
+total VMTs), I am only considering trip times under 2 hours.  This is roughly four
+times the mean commute time in the bay area commute as reported by 
+[CBS SF Bay Area](https://sanfrancisco.cbslocal.com/2020/05/06/coronavirus-covid-19-era-commute-times-could-double-if-bay-area-workers-ditch-transit-for-cars/)
+
+In my actual totaling of VMTs, I throw out the most extreme trips entirely.  What 
+I classify as "long commutes" (those > 100 minutes one way), I assume 
+visits happen less frequently than those under 100 minutes.  I calculate those trip 
+totals by multiplying the trip miles by 261 days for an annual count.  For the trips
+that they are not happening daily, I assume that they happen half as frequently.
+In the future, this could be estimated more robustly by using NHTS median commute
+time data.  Using standard deviations might be a less arbitrary way to assign
+trip counts, but these numbers are reasonable enough for the purpose of this 
+analysis.
+
+Since there are different emission rates associated with different vehicles, I have
+to consider the types of vehicles and fuels used in trips for different years. To 
+incorporate this, I use annual EMFAC data to weight emissions associated with 
+the VMTs in aggregate each year.  
+
+
+```{r include=FALSE}
+emfac <-
+  read_csv("emfac.csv", skip = 8) %>%
+  transmute(
+    Year = `Calendar Year`,
+    Category = `Vehicle Category`,
+    Fuel_Type = Fuel,
+    Percent_Trips = Trips / sum(Trips),
+    Percent_Miles = `Total VMT` / sum(`Total VMT`),
+    `MTCO2_Running_Exhaust` = CO2_RUNEX / `Total VMT`,
+    `MTCO2_Start_Exhaust` = CO2_STREX / Trips
+  )
+
+trips_94127_ghg <- full_zip_od_final_94127 %>%
+  group_by(year) %>%
+  summarise(
+    visits = sum(visits),
+    vmt = sum(vmt)
+  ) %>%
+  left_join(emfac, by = c("year" = "Year")) %>%
+  mutate(
+    trips = Percent_Trips * visits,
+    vmt = Percent_Miles * vmt,
+    ghg_start = trips * MTCO2_Start_Exhaust * 2,
+    ghg_running = vmt * MTCO2_Running_Exhaust,
+    ghg = ghg_start + ghg_running
+  ) %>%
+  group_by(year) %>%
+  summarise(across(starts_with("ghg"), sum))
+```
+
+```{r echo=FALSE}
+  trips_94127_ghg %>% ggplot(
+    aes(
+      x = year,
+      y = ghg
+    )
+  ) +
+  geom_line(stat = "identity") +
+  labs(x = "Year", y = "Tons of CO2", title = "94127 Commute Emissions, 2013 to 2019") +
+  scale_x_continuous(breaks = 2013:2019) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal()
+```
+
+
+This plot gives some indication that commute emissions associated with the 94127 
+zip code have started to decrease over the last 3 years.  This could be a result
+of changes in fuel types for these trips.  Electric cars, for instance, do not
+have any associated emissions in this data set; the 94127 zip code likely has a
+high adoption rate of EVs.
+
+## Building Emissions
+
+Useful to this analysis of GHGs from 94127 is to consider the  emissions from 
+buildings as well.  Since 2013, PG&E publishes an estimated conversion factor from
+kWh to tons of CO2e. Using these factors and the reported kBTU and kWh used in 
+94127, I can total emissions from different building types (commercial
+and residential), and energy usage (gas and electric).  One point to call out is
+that the factor for 2019 that PG&E reports is two orders of magnitude smaller 
+than the previous years.  This is to do with a change in how they are required 
+to report emissions with Community Choice Aggregators and is why there is such a 
+sharp decline in emissions from electricity in 2019. 
+
+In the following graph, I plotted the commute emissions with building emissions
+from each year.
+
+```{r eval=FALSE, include=FALSE}
+pge_elec_emissions_factor <-
+  data.frame(
+    year = c(2013:2019),
+    factor = c(427, 435, 405, 294, 210, 206, 2.68)
+  )
+
+pge_data <-
+  2013:2019 %>%
+  map_dfr(function(yr) {
+    factor <-
+      pge_elec_emissions_factor %>%
+      filter(year == yr) %>%
+      pull(factor)
+    1:4 %>%
+      map_dfr(function(quarter) {
+        c("Electric", "Gas") %>%
+          map_dfr(function(type) {
+            filename <-
+              paste0(
+                "/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/PG&E/PGE_",
+                yr,
+                "_Q",
+                quarter,
+                "_",
+                type,
+                "UsageByZip.csv"
+              )
+            temp <- read_csv(filename, show_col_types = FALSE)
+            if (yr == 2017 & quarter == 4) {
+              temp <-
+                temp %>%
+                filter(MONTH != 9)
+            }
+            temp <-
+              temp %>%
+              rename_all(toupper) %>%
+              mutate(
+                TOTALKBTU = ifelse(
+                  substr(CUSTOMERCLASS, 1, 1) == "E",
+                  TOTALKWH * 3.412,
+                  TOTALTHM * 99.976
+                ),
+                TOTALTCO2E = ifelse(
+                  substr(CUSTOMERCLASS, 1, 1) == "E",
+                  TOTALKWH / 1000 * factor * 0.000453592,
+                  TOTALTHM * 0.00531
+                )
+              ) %>%
+              select(
+                ZIPCODE,
+                YEAR,
+                MONTH,
+                CUSTOMERCLASS,
+                TOTALKBTU,
+                TOTALTCO2E,
+                TOTALCUSTOMERS
+              )
+          })
+      })
+  })
+```
+
+```{r eval=FALSE, include=FALSE}
+us_zips <-
+  zctas(cb = T, progress_bar = F)
+
+sf_zips <-
+  us_zips %>%
+  st_centroid() %>%
+  .[counties("CA", cb = T, progress_bar = F) %>% filter(NAME == "San Francisco"), ] %>%
+  st_drop_geometry() %>%
+  left_join(us_zips %>% select(GEOID10)) %>%
+  st_as_sf() %>%
+  st_transform(4326)
+```
+
+```{r eval=FALSE, include=FALSE}
+sf_pge_data <-
+  pge_data %>%
+  filter(ZIPCODE == "94127") %>%
+  filter(CUSTOMERCLASS %in% c(
+    "Elec- Commercial",
+    "Elec- Residential",
+    "Gas- Commercial",
+    "Gas- Residential"
+  )) %>%
+  separate(CUSTOMERCLASS, c("Energy_Type", "Customer_Type"), sep = "- ") %>%
+  group_by(ZIPCODE, Energy_Type, Customer_Type, YEAR) %>%
+  summarize(
+    TOTALKBTU = sum(TOTALKBTU, na.rm = T),
+    TOTALTCO2E = sum(TOTALTCO2E, na.rm = T),
+    TOTALCUSTOMERS = mean(TOTALCUSTOMERS, na.rm = T)
+  ) %>%
+  group_by(Customer_Type, Energy_Type, YEAR) %>%
+  summarize(across(
+    c(TOTALKBTU, TOTALTCO2E, TOTALCUSTOMERS),
+    ~ sum(., na.rm = T)
+  ))
+```
+
+```{r echo=FALSE}
+sf_pge_data <- readRDS("sf_pge_data.rds")
+
+combined_building_transit <- sf_pge_data %>% 
+  ungroup() %>% 
+  select(YEAR, TOTALTCO2E) %>% 
+  group_by(YEAR) %>% 
+  summarise(
+    TOTALTCO2E = sum(TOTALTCO2E)
+  ) %>% 
+  mutate(
+    source = "Building"
+  ) %>% 
+  rbind(
+    trips_94127_ghg %>% 
+      rename(YEAR = year) %>% 
+      group_by(YEAR) %>% 
+      summarise(
+      TOTALTCO2E = sum(ghg)
+      ) %>% 
+      mutate(
+        source = "Commute"
+      )
+  )
+  
+combined_building_transit %>%
+  ggplot(
+    aes(
+      x = YEAR,
+      y = TOTALTCO2E
+    )
+  ) +
+  geom_bar(stat = "identity", aes(fill = source), position = "stack") +
+  labs(x = "Year", y = "Tons of CO2e", title = "94127 Annual Emissions, 2013 to 2019") +
+  scale_fill_discrete(name = "Emission Source", labels = c("Building", "Commute")) + 
+  scale_x_continuous(breaks = 2013:2019) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal()
+```
+
+It is somewhat difficult to see much change in the building emissions year to year.
+The following plot zooms in on what types of energy use is contributing most to
+CO2e building emissions.  Clear here is that gas usage is a much bigger emitter 
+than electricity, which has contributed progressively less CO2e.  The near 0 tons 
+of CO2e reported in 2019 is result of the above mentioned change in reporting. 
+Nonetheless, in the years prior, electricity has consistently been contributing 
+less CO2e.
+
+```{r echo=FALSE}
+ggplot(
+  sf_pge_data,
+  aes(
+    x = as.factor(YEAR),
+    y = TOTALTCO2E
+  )
+) +
+  geom_bar(stat = "identity", aes(fill = Energy_Type), position = "dodge") +
+  labs(x = "Year", y = "Tons of CO2e", title = "94127 Building Emissions, 2013 to 2019") +
+  scale_fill_discrete(name = "Energy Type", labels = c("Electricity", "Gas")) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal()
+```
+
+The trend in electricity emissions is promising, especially when considering that 
+there has been little change in the proportion of energy usage between gas and 
+electricity.  This is to say that the decrease in emissions from electricity is 
+not associated with a decrease in electricty usage, as clearly seen in the plot
+below. 
+
+
+```{r echo=FALSE}
+ggplot(
+  sf_pge_data,
+  aes(
+    x = as.factor(YEAR),
+    y = TOTALKBTU / 1000000
+  )
+) +
+  geom_bar(stat = "identity", aes(fill = Energy_Type), position = "dodge") +
+  labs(x = "Year", y = "GBTU", title = "94127 Annual Energy Usage, 2013 to 2019") +
+  scale_fill_discrete(name = "Energy Type", labels = c("Electricity", "Gas")) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal()
+```
+
+A deeper investigation into building type can reveal other interesting findings.
+Since 94127 is a largely residential neighborhood, it is reasonable to expect that
+residential buildings would contribute more to the ultimate GHG totals.  A plot of
+the type of energy by the type of buildings shows that residential gas is far and
+away the largest contributor of GHGs in the zipcode.
+
+
+```{r echo=FALSE}
+sf_pge_data %>%
+  ggplot(
+    aes(
+      x = YEAR,
+      y = TOTALTCO2E
+    )
+  ) +
+  geom_line(aes(color = Energy_Type, linetype = Customer_Type)) +
+  labs(x = "Year", y = "tCO2e", title = "94127 Annual Emissions By Type, 2013 to 2019") +
+  scale_color_discrete(name = "Energy Type", labels = c("Electricity", "Gas"))+
+  scale_x_continuous(breaks = 2013:2019) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal()
+```
+
+
+Within this zip code, electrifying homes would appear to have an enormous effect 
+on the overall associate emissions.  As there are not many commercial properties,
+neither the commercial gas or electricity emissions are proportionately very high.
+
+A normalized energy usage could potentially give a better sense of which buildings
+are operating more energy intensively.  Below, I normalize commercial energy use 
+by the number of jobs within 94127 and residential energy use by the reported 
+total of 94127 customers from PG&E. I also want to normalize to the difference 
+in temperatures year to year, as a year with a record heat wave would likely have 
+greater electricity usage for cooling than other years. I divided electricity 
+usage by the heating degree days (HDDs), as those days require more AC loads for 
+cooling,and gas usage by cooling degree days (CDDs) which would drive a higher 
+demand for gas heating in most buildings.
+
+```{r include=FALSE}
+HDD_94127 <- read_csv("HDD_94127.csv", skip = 8) %>%
+  select(year, "CanESM2 (Average)") %>%
+  filter(
+    year == 2013:2019
+  ) %>%
+  group_by(year) %>%
+  transmute("HDD_average" = `CanESM2 (Average)`)
+
+CDD_94127 <- read_csv("CDD_94127.csv", skip = 8) %>%
+  select(year, "CanESM2 (Average)") %>%
+  filter(
+    year == 2013:2019
+  ) %>%
+  group_by(year) %>%
+  transmute("CDD_average" = `CanESM2 (Average)`)
+```
+
+
+```{r include=FALSE}
+full_zip_od_final_94127 <- readRDS("full_zip_od_final_94127.rds")
+zip_blocks_94127 <- readRDS("zip_blocks_94127.rds")
+jobs_count <- full_zip_od_final_94127 %>%
+  filter(w_geocode %in% zip_blocks_94127$GEOID10) %>% 
+  group_by(year) %>%
+  summarise(
+    total_jobs = sum(S000)
+  )
+```
+
+```{r message=TRUE, include=FALSE}
+normalized_building_emissions <- sf_pge_data %>%
+  left_join(jobs_count %>% rename(YEAR = year)) %>%
+  left_join(CDD_94127 %>% rename(YEAR = year)) %>%
+  left_join(HDD_94127 %>% rename(YEAR = year)) %>%
+  ungroup() %>%
+  mutate(
+    intensity_by_pop_hdd = if_else(
+      Customer_Type == "Residential" & Energy_Type == "Elec",
+      (TOTALTCO2E / TOTALCUSTOMERS) / HDD_average,
+      NA_real_
+    ),
+    intensity_by_pop_cdd = if_else(
+      Customer_Type == "Residential" & Energy_Type == "Gas",
+      (TOTALTCO2E / TOTALCUSTOMERS) / CDD_average,
+      NA_real_
+    ),
+    intensity_by_job_hdd = if_else(
+      Customer_Type == "Commercial" & Energy_Type == "Elec",
+      (TOTALTCO2E / total_jobs) / HDD_average,
+      NA_real_
+    ),
+    intensity_by_job_cdd = if_else(
+      Customer_Type == "Commercial" & Energy_Type == "Gas",
+      (TOTALTCO2E / total_jobs) / CDD_average,
+      NA_real_
+    )
+  )
+
+```
+
+```{r echo=FALSE}
+normalized_building_emissions %>%
+  mutate(
+    line_group = rep(c("residential_elec", "residential_gas", "commercial_elec", "commercial_gas"), each = 7),
+    emissions_intensity = coalesce(intensity_by_pop_hdd, intensity_by_pop_cdd, intensity_by_job_hdd, intensity_by_job_cdd)
+  ) %>%
+  ggplot(
+    aes(
+      x = YEAR,
+      y = emissions_intensity
+    )
+  ) +
+  geom_line(aes(color = line_group)) +
+  labs(
+    x = "Year",
+    y = "tCO2e/Population/Degree Differential",
+    title = "94127 Annual Energy Usage Normalized by Intensity, 2013 to 2019"
+  ) +
+  theme_minimal()
+```
+
+The normalized plot of different building types and energy usage indicates that
+commercial electricity may actually be contributing a disproportionate amount of
+CO2e emissions.  In considering where the greatest opportunity lies in reducing 
+carbon emissions however, this analysis perhaps suggests that a reduction in 
+commercial gas (for this specific zip code) could easily be made less energy
+intensive, even though they contribute relatively little to the total CO2e emissions.
+One caveat is that PG&E is missing data for much of the commercial electricity
+reporting, so this plot should be taken with a grain of salt.  Some conclusions
+that can be confidently drawn however, is that building energy from gas is a 
+hugely significant contributor of CO2e emissions in 94127 and ought to be a target
+for reducing GHG emissions.
