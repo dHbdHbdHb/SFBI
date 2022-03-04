@@ -1,0 +1,6 @@
+"0","smc_no_veh_total <- smc_bg_vehicle %>% "
+"0","  filter(vehicles == ""No vehicle available"" | vehicles == ""1 vehicle available"") %>% "
+"0","  group_by(vehicles) %>% "
+"0","  summarise("
+"0","    totals = sum(estimate)"
+"0","  )"

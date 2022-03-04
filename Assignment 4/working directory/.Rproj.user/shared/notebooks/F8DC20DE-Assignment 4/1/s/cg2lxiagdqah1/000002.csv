@@ -1,0 +1,4 @@
+"0","fc_bldg_exposure <- readRDS(""fc_bldg_exposure.rds"") %>% "
+"0","  mutate("
+"0","    avg_depth = avg_depth*.0328084 #converting to ft"
+"0","  )"

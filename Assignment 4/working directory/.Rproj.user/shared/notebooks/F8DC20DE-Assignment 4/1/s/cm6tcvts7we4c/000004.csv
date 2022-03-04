@@ -1,0 +1,100 @@
+"0","fc_bldg_aal_by_year_map%>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = ""light-v9"",
+    username = ""mapbox""
+  ) %>% 
+  addPolygons(
+    fillColor = ~aal_pal(`2020`),
+    color = ""gray"",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = ""white"",
+      weight = 2
+    ),
+    label = ~paste0(""$"",prettyNum(signif(`2020`,2),"",""),"" average annualized loss in 2020""),
+    group = ""2020""
+  )  %>% 
+  addPolygons(
+    fillColor = ~aal_pal(`2030`),
+    color = ""gray"",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = ""white"",
+      weight = 2
+    ),
+    label = ~paste0(""$"",prettyNum(signif(`2030`,2),"",""),"" average annualized loss in 2030""),
+    group = ""2030""
+  )  %>% 
+  addPolygons(
+    fillColor = ~aal_pal(`2040`),
+    color = ""gray"",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = ""white"",
+      weight = 2
+    ),
+    label = ~paste0(""$"",prettyNum(signif(`2040`,2),"",""),"" average annualized loss in 2040""),
+    group = ""2040""
+  ) %>% 
+  addPolygons(
+    fillColor = ~aal_pal(`2050`),
+    color = ""gray"",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = ""white"",
+      weight = 2
+    ),
+    label = ~paste0(""$"",prettyNum(signif(`2050`,2),"",""),"" average annualized loss in 2050""),
+    group = ""2050""
+  ) %>% 
+  addPolygons(
+    fillColor = ~aal_pal(change),
+    color = ""gray"",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = ""white"",
+      weight = 2
+    ),
+    label = ~paste0(""$"",prettyNum(signif(change,2),"",""),"" change in average annualized loss from 2020 to 2050""),
+    group = ""Change""
+  ) %>% 
+  addLegend(
+    pal = aal_pal,
+    values = ~`2050`,
+    title = ""AAL""
+  ) %>% 
+  addLayersControl(
+    baseGroups = c(""2020"",""2030"",""2040"",""2050"",""Change""),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>% 
+  showGroup(""2050"")
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"
+"2","*** recursive gc invocation
+"

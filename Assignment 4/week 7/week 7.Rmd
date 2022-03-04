@@ -1,0 +1,613 @@
+---
+title: "week 7"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(remotes)
+install_github("yonghah/esri2sf")
+
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(stars)
+library(tigris)
+library(jsonlite)
+library(esri2sf)
+library(raster)
+library(mapboxapi)
+library(censusapi)
+library(mapview)
+library(plotly)
+
+Sys.setenv(CENSUS_KEY = "c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+```
+
+```{r}
+slr <- 25
+rp <- 20
+
+path <- paste0("/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/OCOF/san_mateo_flooding_slr",str_pad(slr, 3, "left", "0"),"/flooding/v2.1/county_san_mateo_flddepth_slr",str_pad(slr, 3, "left", "0"),"_w",str_pad(rp, 3, "left", "0"),".tif")
+
+test_flood <- raster(path)
+```
+
+```{r}
+epa_boundary <- places("CA") %>% 
+  filter(NAME == "East Palo Alto")
+
+test_flood_epa <- test_flood %>% 
+  crop(
+    epa_boundary %>% 
+      st_transform(26910) %>% 
+      st_bbox()
+  )
+```
+
+```{r}
+plot(test_flood_epa)
+```
+
+```{r}
+flood_pal <- colorNumeric(
+  palette = "Blues",
+  domain = values(test_flood_epa),
+  na.color = "transparent"
+)
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "satellite-streets-v11",
+    username = "mapbox",
+    options = tileOptions(opacity = 0.5)
+  ) %>% 
+  addRasterImage(
+    test_flood_epa,
+    colors = flood_pal
+  ) %>% 
+  addLegend(
+    pal = flood_pal,
+    values = values(test_flood_epa),
+    title = "Flood depth, cm"
+  )
+```
+
+
+```{r}
+for(slr in c("000","025","050")){
+  
+  for(rp in c("001","020","100")){
+    
+    print(paste0("SLR",slr,"_RP",rp))
+    
+    path <- paste0("/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/OCOF/san_mateo_flooding_slr",slr,"/flooding/v2.1/county_san_mateo_flddepth_slr",slr,"_w",rp,".tif")
+    
+    flood <- raster(path) %>% 
+      crop(
+        epa_boundary %>% 
+          st_transform(26910) %>% 
+          st_bbox()
+      )
+    
+    writeRaster(flood, paste0("/Users/danielhillsbunnell/Documents/GitHub/SFBI/Assignment 4/week 7/SLR",slr,"_RP",rp,"_epa_flood.tif"), overwrite = T)
+    
+  }
+}
+```
+
+```{r}
+epa_bldg <- readRDS("epa_bldg.rds")
+flood_max <- 
+  raster("SLR050_RP100_epa_flood.tif")
+
+flood_max_extent <- 
+  flood_max %>% 
+  st_as_stars() %>% 
+  mutate(SLR050_RP100_epa_flood = ifelse(
+    !is.na(SLR050_RP100_epa_flood),
+    1,
+    NA
+  )) %>% 
+  st_as_sf(merge = T) %>% 
+  st_set_crs(26910) %>% 
+  st_make_valid() %>% 
+  st_transform(4326)
+
+epa_bldg_flooded_max <-
+  epa_bldg %>% 
+  st_transform(4326) %>% 
+  .[flood_max_extent,] %>% 
+  saveRDS("epa_bldg_flooded_max.rds")
+```
+
+```{r}
+flood_pal <- colorNumeric(
+  palette = "Blues",
+  domain = values(flood_max),
+  na.color = "transparent"
+)
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "satellite-streets-v11",
+    username = "mapbox",
+    options = tileOptions(opacity = 0.5)
+  ) %>% 
+  addRasterImage(
+    flood_max,
+    colors = flood_pal,
+    opacity = 0.75
+  ) %>% 
+  addPolygons(
+    data = epa_bldg_flooded_max,
+    fill = F,
+    color = "red",
+    weight = 0.5
+  ) %>% 
+  addLegend(
+    pal = flood_pal,
+    values = values(flood_max),
+    title = "Flood depth, cm"
+  )
+```
+
+```{r}
+epa_bldg_exposure <- NULL
+
+for(slr in c("000","025","050")){
+  
+  for(rp in c("001","020","100")){
+    
+    print(paste0("SLR",slr,"_RP",rp))
+    
+    flood <- raster("SLR000_RP001_epa_flood.tif")
+      # raster( paste0("SLR",slr,"_RP",rp,"_epa_flood.tif"))
+    
+    
+    flood_extent <- 
+      (flood > -Inf) %>% 
+      st_as_stars() %>% 
+      st_as_sf(merge = T) %>% 
+      st_set_crs(26910) %>% 
+      st_make_valid() %>% 
+      st_transform(4326)
+    
+    epa_bldg_flooded <-
+      epa_bldg_flooded_max[flood_extent,] %>% 
+      st_transform(26910)
+    
+    flood_crop <-
+      crop(flood, epa_bldg_flooded)
+    
+    flood_crop[is.na(flood_crop)] <- 0
+    
+    temp <-
+      extract(
+        flood_crop,
+        epa_bldg_flooded,
+        fun = mean
+      ) %>% 
+      as.data.frame() %>% 
+      rename(avg_depth = V1) %>% 
+      cbind(
+        epa_bldg_flooded %>% 
+          st_drop_geometry() %>% 
+          dplyr::select(osm_id)
+      ) %>% 
+      mutate(
+        SLR = slr,
+        RP = rp
+      )
+    
+    epa_bldg_exposure <- 
+      epa_bldg_exposure %>% 
+      rbind(temp)
+    saveRDS(epa_bldg_exposure,"epa_bldg_exposure.rds")
+  }
+}
+saveRDS(epa_bldg_exposure,"epa_bldg_exposure.rds")
+```
+
+
+
+
+
+
+PERCENT DAMAGE CALCULATION:
+
+```{r}
+sedan_vulnerability <- data.frame(
+  depth = c(.5, 1:10),
+  perc_damage = c(
+    7.6,
+    28,
+    46.2,
+    62.2,
+    76,
+    87.6,
+    97,
+    100,
+    100,
+    100,
+    100
+  ),
+  std = c(
+    2.42,
+    1.84,
+    1.51,
+    1.45,
+    1.57,
+    1.74,
+    1.92,
+    2.06,
+    2.06,
+    2.06,
+    2.06
+  )
+)
+```
+
+
+```{r}
+epa_bldg_exposure <- readRDS("epa_bldg_exposure.rds") %>% 
+  mutate(
+    avg_depth = avg_depth*.0328084 #converting to ft
+  )
+```
+
+```{r}
+epa_bldg_perc_damage <-
+  approx(
+    x = sedan_vulnerability$depth,
+    y = sedan_vulnerability$perc_damage,
+    xout = epa_bldg_exposure$avg_depth
+  ) %>% 
+  .[2] %>% 
+  as.data.frame() %>% 
+  rename(perc_damage = y) %>% 
+  cbind(epa_bldg_exposure)
+
+saveRDS(epa_bldg_perc_damage,"epa_bldg_perc_damage.rds" )
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+
+saveRDS(acs_vars_2019_5yr, "acs_vars_2019_5yr.rds")
+```
+
+
+```{r}
+epa_cbg <- block_groups("CA","San Mateo", cb = F, progress_bar = F, year = 2019) %>% 
+  filter(GEOID == "060816119003") %>% 
+  st_transform(4326)
+
+epa_bldgs <- readRDS("epa_bldg.rds") %>% 
+  .[epa_cbg,]
+```
+
+
+```{r}
+epa_blocks <- 
+  blocks("CA","San Mateo", progress_bar = F, year = 2020) %>% 
+  # readRDS("epa_blocks.rds") %>% 
+  st_transform(4326) %>% 
+  .[epa_bldgs,]
+
+saveRDS(epa_blocks, "epa_blocks.rds")
+
+```
+
+
+```{r}
+acs_vars_2019_5yr <- readRDS("acs_vars_2019_5yr.rds")
+epa_blocks <- readRDS("epa_blocks.rds")
+```
+
+
+```{r}
+epa_blocks_pop <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2020,
+    region = "block:*", 
+    regionin = "state:06+county:081",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    GEOID20 = paste0(state,county,tract,block),
+    pop = P1_001N
+  ) %>% 
+  filter(GEOID20 %in% epa_blocks$GEOID20)
+```
+
+```{r}
+smc_bg_vehicle <-
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "block group:*",
+    regionin = "state:06+county:081",
+    vars = "group(B25044)"
+  ) %>% 
+  mutate(
+    cbg =
+      paste0(state,county,tract,block_group)
+  ) %>% 
+  dplyr::select(!c(GEO_ID,state,county,tract,block_group,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      dplyr::select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  dplyr::select(-variable) %>% 
+  separate(
+    label,
+    into = c(NA, NA, "tenure", "vehicles"),
+    sep = "!!"
+  ) %>%
+  filter(!is.na(vehicles)) %>% 
+  filter(cbg %in% epa_cbg$GEOID)
+```
+
+```{r}
+smc_bg_vehicle_total <- smc_bg_vehicle %>% 
+  filter(vehicles != "No vehicle available") %>%
+  mutate(
+    vehicles = substr(vehicles, 1,1) %>% as.numeric(),
+    vehicle_count = vehicles*estimate
+  ) %>%
+  group_by(cbg) %>%
+  summarize(estimate = sum(estimate))
+
+```
+
+```{r}
+epa_block_veh_per_bldg <-
+  epa_bldgs %>% 
+  filter(type == "residential" | is.na(type)) %>% # any non-residential buildings?
+  dplyr::select(osm_id) %>% # unique ID for each building
+  st_centroid() %>% 
+  st_join(epa_blocks %>% dplyr::select(GEOID20, POP20)) %>% # block shapes
+  st_join(epa_cbg %>% dplyr::select(cbg = GEOID)) %>% # cbg shapes
+  st_drop_geometry() %>% 
+  group_by(cbg, GEOID20, POP20) %>% # "assuming population is distributed evenly across buildings in a block"
+  summarize(bldg_count = n()) %>% # count the number of rows because all osm_id should be unique
+  left_join(smc_bg_vehicle_total) %>% # census dataset
+  group_by(GEOID20) %>% # "and vehicles are distributed evenly across population"
+  mutate(
+    veh_per_person = estimate/sum(POP20),
+    ppl_per_bldg = POP20/bldg_count,
+    veh_per_bldg = veh_per_person*ppl_per_bldg # fractional result ok
+  )
+
+# dataset with individual buildings, vehicle counts for each building
+epa_veh_per_bldg <- epa_bldgs %>% 
+  filter(is.na(type)) %>% 
+  select(osm_id) %>% 
+  st_centroid() %>% 
+  st_join(epa_blocks %>% dplyr::select(GEOID20)) %>% 
+  left_join(epa_block_veh_per_bldg %>% select(ppl_per_bldg, veh_per_bldg)) 
+```
+
+```{r}
+emfac <-
+  read_csv("emfac.csv", skip = 8) %>% 
+  select(`Calendar Year`, `Vehicle Category`, Population ) %>% 
+  ungroup() %>% 
+  group_by(`Calendar Year`) %>% 
+  summarise(total = sum(Population)) %>%
+  mutate(
+    perc_change = total / lag(total)
+  )
+```
+
+```{r}
+epa_bldg_perc_damage <- readRDS("epa_bldg_perc_damage.rds")
+avg_sedan_cost <- 30281
+perc_moved <- .60
+perc_safe <- .30
+
+epa_damage_table <- epa_bldg_perc_damage %>% 
+  left_join(epa_veh_per_bldg) %>% 
+  filter(!is.na(GEOID20), !is.na(perc_damage)) %>% 
+  mutate(
+    total_cost = perc_damage*.01*veh_per_bldg*avg_sedan_cost*perc_moved*perc_safe
+  ) %>% 
+  summarise(annual_cost = sum(total_cost)) %>% 
+  st_as_sf()
+  
+```
+
+```{r}
+projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
+
+epa_bldg_flooded_max <- 
+  readRDS("epa_bldg_flooded_max.rds") %>% 
+  st_transform(projection) %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  )
+
+epa_bldg_perc_damage <- readRDS("epa_bldg_perc_damage.rds")
+
+epa_bldg_damage <-
+  epa_bldg_perc_damage %>% 
+  left_join(
+    epa_bldg_flooded_max %>%
+      st_drop_geometry() %>% 
+      select(osm_id, area)
+  ) %>% 
+  mutate(
+    damage = area * 200 * perc_damage
+  ) %>% 
+  dplyr::select(osm_id, SLR, RP, damage)
+```
+
+```{r}
+epa_bldg_aal_by_slr <-
+  epa_bldg_damage %>% 
+  pivot_wider(
+    names_from = RP,
+    values_from = damage
+  ) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(
+    damage = 
+      0.95*(`001`+`020`)/2 + 
+      0.04*(`020`+`100`)/2 + 
+      0.01*(`100`)
+  ) %>% 
+  dplyr::select(osm_id, SLR, damage)
+```
+
+```{r}
+rcp45 <- read_csv("https://raw.githubusercontent.com/stanfordfuturebay/stanfordfuturebay.github.io/master/advanced/rcp45_sanfrancisco.csv")
+```
+
+```{r}
+epa_bldg_aal_by_year <- 
+  epa_bldg_aal_by_slr %>% 
+  left_join(
+    rcp45 %>% 
+      mutate(
+        SLR = str_pad(SLR, 3 , "left", "0")
+      ) %>% 
+      select(
+        SLR,
+        `2020`,
+        `2030`,
+        `2040`,
+        `2050`
+      )
+  ) %>% 
+  pivot_longer(
+    `2020`:`2050`,
+    names_to = "year",
+    values_to = "occurrence"
+  ) %>% 
+  pivot_longer(
+    c(damage,occurrence),
+    names_to = "key",
+    values_to = "value"
+  ) %>% 
+  pivot_wider(
+    names_from = c("key","SLR"),
+    values_from = value
+  ) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(
+    damage = 
+      occurrence_000 * (damage_000 + damage_025)/2 + 
+      occurrence_025 * (damage_025 + damage_050)/2 + 
+      occurrence_050 * (damage_050)
+  ) %>% 
+  dplyr::select(osm_id, year, damage)
+```
+
+```{r}
+epa_bldg_aal_by_year_map <-
+  epa_bldg_aal_by_year %>% 
+  pivot_wider(
+    names_from = year,
+    values_from = damage
+  ) %>% 
+  mutate(
+    change = `2050`-`2020`
+  ) %>% 
+  left_join(
+    epa_bldg_flooded_max %>%
+      dplyr::select(osm_id)
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+```
+
+```{r}
+aal_pal <- colorNumeric(
+  palette = "Reds",
+  domain = c(0,epa_bldg_aal_by_year_map$`2050`)
+)
+
+epa_bldg_aal_by_year_map %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~aal_pal(`2020`),
+    color = "gray",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = "white",
+      weight = 2
+    ),
+    label = ~paste0("$",prettyNum(signif(`2020`,2),",")," average annualized loss in 2020"),
+    group = "2020"
+  ) %>% 
+  addPolygons(
+    fillColor = ~aal_pal(`2050`),
+    color = "gray",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = "white",
+      weight = 2
+    ),
+    label = ~paste0("$",prettyNum(signif(`2050`,2),",")," average annualized loss in 2050"),
+    group = "2050"
+  ) %>% 
+  addPolygons(
+    fillColor = ~aal_pal(change),
+    color = "gray",
+    fillOpacity = 1,
+    opacity = 1,
+    weight = 0.25,
+    highlightOptions = highlightOptions(
+      color = "white",
+      weight = 2
+    ),
+    label = ~paste0("$",prettyNum(signif(change,2),",")," change in average annualized loss from 2020 to 2050"),
+    group = "Change"
+  ) %>% 
+  addLegend(
+    pal = aal_pal,
+    values = ~`2050`,
+    title = "AAL"
+  ) %>% 
+  addLayersControl(
+    baseGroups = c("2020","2050","Change"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>% 
+  showGroup("2050")
+```
+

@@ -1,0 +1,95 @@
+"0","knitr::opts_chunk$set(echo = TRUE)"
+"0","library(remotes)"
+"0","install_github(""yonghah/esri2sf"")"
+"2","Skipping install of 'esri2sf' from a github remote, the SHA1 (9abb560d) has not changed since last install.
+  Use `force = TRUE` to force installation
+"
+"0","library(tidyverse)"
+"2","Registered S3 methods overwritten by 'dbplyr':
+  method         from
+  print.tbl_lazy     
+  print.tbl_sql      
+"
+"2","[37m── [1mAttaching packages[22m ───────────────────────────────────────────────────────────────────────────────────────────────────────────── tidyverse 1.3.1 ──[39m
+"
+"2","[37m[32m✓[37m [34mggplot2[37m 3.3.5     [32m✓[37m [34mpurrr  [37m 0.3.4
+[32m✓[37m [34mtibble [37m 3.1.6     [32m✓[37m [34mdplyr  [37m 1.0.7
+[32m✓[37m [34mtidyr  [37m 1.1.4     [32m✓[37m [34mstringr[37m 1.4.0
+[32m✓[37m [34mreadr  [37m 2.1.2     [32m✓[37m [34mforcats[37m 0.5.1[39m
+"
+"2","[37m── [1mConflicts[22m ──────────────────────────────────────────────────────────────────────────────────────────────────────────────── tidyverse_conflicts() ──
+[31mx[37m [34mtidyr[37m::[32mextract()[37m masks [34mraster[37m::extract()
+[31mx[37m [34mdplyr[37m::[32mfilter()[37m  masks [34mstats[37m::filter()
+[31mx[37m [34mdplyr[37m::[32mlag()[37m     masks [34mstats[37m::lag()
+[31mx[37m [34mdplyr[37m::[32mselect()[37m  masks [34mraster[37m::select()[39m
+"
+"0","library(sf)"
+"2","Linking to GEOS 3.8.1, GDAL 3.2.1, PROJ 7.2.1; sf_use_s2() is TRUE
+"
+"0","library(leaflet)"
+"0","library(stars)"
+"2","Loading required package: abind
+"
+"0","library(tigris)"
+"2","To enable 
+caching of data, set `options(tigris_use_cache = TRUE)` in your R script or .Rprofile.
+"
+"0","library(jsonlite)"
+"2","
+Attaching package: ‘jsonlite’
+
+"
+"2","The following object is masked from ‘package:purrr’:
+
+    flatten
+
+"
+"0","library(esri2sf)"
+"0","library(raster)"
+"0","library(mapboxapi)"
+"2","Usage of the Mapbox APIs is governed by the Mapbox Terms of Service.
+Please visit https://www.mapbox.com/legal/tos/ for more information.
+"
+"0","library(censusapi)"
+"2","
+Attaching package: ‘censusapi’
+
+"
+"2","The following object is masked from ‘package:methods’:
+
+    getFunction
+
+"
+"0","library(plotly)"
+"2","Registered S3 method overwritten by 'data.table':
+  method           from
+  print.data.table     
+"
+"2","
+Attaching package: ‘plotly’
+
+"
+"2","The following object is masked from ‘package:ggplot2’:
+
+    last_plot
+
+"
+"2","The following object is masked from ‘package:raster’:
+
+    select
+
+"
+"2","The following object is masked from ‘package:stats’:
+
+    filter
+
+"
+"2","The following object is masked from ‘package:graphics’:
+
+    layout
+
+"
+"0","library(mapview)"
+"0",""
+"0","Sys.setenv(CENSUS_KEY = ""c8aa67e4086b4b5ce3a8717f59faa9a28f611dab"")"
+"0",""

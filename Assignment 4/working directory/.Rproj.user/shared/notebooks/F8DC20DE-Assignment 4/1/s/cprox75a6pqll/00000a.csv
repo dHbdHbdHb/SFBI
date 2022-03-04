@@ -1,0 +1,9 @@
+"0","fc_cbg <- block_groups(""CA"",""San Mateo"", cb = F, progress_bar = F, year = 2019) %>% "
+"0","  st_transform(4326) %>% "
+"0","  .[fc_boundary,]"
+"2","Using FIPS code '06' for state 'CA'
+"
+"2","Using FIPS code '081' for 'San Mateo County'
+"
+"0","  saveRDS(fc_cbg,""fc_cbg.rds"")"
+"0","  mapview(fc_cbg)"

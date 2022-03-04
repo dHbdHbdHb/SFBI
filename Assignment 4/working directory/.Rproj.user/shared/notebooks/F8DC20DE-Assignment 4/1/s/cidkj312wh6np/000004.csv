@@ -1,0 +1,4 @@
+"0","fc_buildings <- smc_buildings %>% "
+"0","  .[fc_boundary,] "
+"0",""
+"0","saveRDS(fc_buildings, ""fc_bldg.rds"")"

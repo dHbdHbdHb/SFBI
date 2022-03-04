@@ -61,6 +61,15 @@ saveRDS(zip_blocks_94127, "zip_blocks_94127.rds")
 saveRDS(zip_od_94127, "zip_od_94127.rds")
 ```
 
+```{r}
+zip_blocks_94127 <- readRDS("zip_blocks_94127.rds")
+leaflet() %>%
+  addTiles() %>%
+  addPolygons(
+    
+  )
+```
+
 ```{r eval=FALSE, include=FALSE}
 zip_blocks_94127 <- readRDS("zip_blocks_94127")
 
