@@ -1,0 +1,9 @@
+"0","aqi_pal2 <- colorQuantile("
+"0","  palette = ""RdYlGn"","
+"0","  reverse = T,"
+"0","  domain = sunset_sensors_clean$AQI,"
+"0","  n = 5"
+"0",")"
+"2","Error in colorQuantile(palette = ""RdYlGn"", reverse = T, domain = sunset_sensors_clean$AQI,  : 
+  object 'sunset_sensors_clean' not found
+"

@@ -1,0 +1,124 @@
+---
+title: "Second Dashboard Demo"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(leaflet)
+library(sf)
+library(plotly)
+
+# smc_places <- places("CA", cb = T) %>% 
+#   st_centroid() %>% 
+#   .[counties("CA") %>% filter(NAME == "San Mateo"),] %>% 
+#   st_drop_geometry() %>% 
+#   left_join(places("CA", cb = T) %>% select(PLACEFP)) %>% 
+#   st_as_sf()
+# saveRDS(smc_places, "smc_places.rds")
+smc_places <- readRDS("smc_places.rds")
+
+# smc_cbgs <- block_groups("CA","San Mateo", cb = T)
+# saveRDS(smc_cbgs, "smc_cbgs.rds")
+smc_cbgs <- readRDS("smc_cbgs.rds")
+```
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+selectInput(
+  inputId = "city", 
+  label = "Jurisdiction:",
+  choices = c("",smc_places$NAME)
+)
+```
+
+Column
+-------------------------------------
+
+### Plot
+
+```{r}
+plotlyOutput("plot")
+```
+
+```{r, context = "server"}
+observeEvent(input$city, {
+  
+  chart <- smc_places %>% 
+    filter(NAME == input$city) %>% 
+    ggplot(
+      aes(
+        x = ALAND,
+        y = AWATER
+      )
+    ) +
+    geom_point()
+  
+  output$plot <- renderPlotly({
+    chart %>% 
+      ggplotly() %>% 
+      config(displayModeBar = F)
+  })
+  
+})
+```
+
+Column
+-------------------------------------
+
+### Map
+
+```{r}
+leafletOutput("map")
+```
+
+```{r, context = "server"}
+cbg_pal <- colorNumeric(
+  palette = "RdYlGn",
+  domain = 
+    smc_cbgs$ALAND
+)
+  
+output$map <- renderLeaflet({
+  leaflet() %>% 
+    addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+    addPolygons(
+      data = smc_cbgs,
+      fillColor = ~cbg_pal(ALAND),
+      color = "white",
+      opacity = 0.5,
+      fillOpacity = 0.5,
+      weight = 1,
+      highlightOptions = highlightOptions(
+        weight = 2,
+        opacity = 1
+      )
+    )
+})
+```
+
+```{r, context = "server"}
+observeEvent(input$city, {
+  
+  selected <- smc_places %>% 
+    filter(NAME == input$city)
+  
+  leafletProxy("map") %>% 
+    removeShape("selected") %>% 
+    addPolygons(
+      data = selected,
+      fill = F,
+      color = "black",
+      weight = 2,
+      opacity = 1,
+      layerId = "selected"
+    )
+  
+})
+```

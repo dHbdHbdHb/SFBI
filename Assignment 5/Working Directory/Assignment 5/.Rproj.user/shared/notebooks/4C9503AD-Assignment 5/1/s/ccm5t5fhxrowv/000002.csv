@@ -1,0 +1,3 @@
+"0","starts <- seq.Date(ymd(""2022-02-01""), by = ""1 week"", length.out = 4) %>% as.character()"
+"0","ends <- seq.Date(ymd(""2022-02-07""), by = ""1 week"", length.out = 4) %>% as.character()"
+"0","start_end <- map2(starts, ends, function(x, y) c(x, y))"

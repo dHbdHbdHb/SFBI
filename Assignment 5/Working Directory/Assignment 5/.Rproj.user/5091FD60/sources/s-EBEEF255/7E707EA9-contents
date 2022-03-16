@@ -1,0 +1,428 @@
+
+
+---
+title: "Assignment 2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(tidytransit)
+library(remotes)
+library(sf)
+library(censusapi)
+library(tigris)
+library(leaflet)
+library(readxl)
+library(mapboxapi)
+library(mapview)
+(tigris_use_cache = FALSE)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+pois <- st_read("/Volumes/GoogleDrive/Shared drives/SFBI/Data Library/OSM/gis_osm_pois_a_free_1.shp")
+
+sf_neighborhoods <- read_csv("Analysis_Neighborhoods.csv") %>% 
+  select(c(GEOID, NHOOD,TRACTCE10)
+  )
+
+gtfs <- read_gtfs("https://gtfs.sfmta.com/transitdata/google_transit.zip")
+```
+
+```{r city boundary, message=FALSE, warning=FALSE, include=FALSE}
+sf_boundary <- counties("CA", cb =TRUE) %>% 
+  filter(NAME %in% c("San Francisco", "San Mateo")) %>% 
+  st_transform(st_crs(pois))
+```
+
+```{r tract function, eval=FALSE, include=FALSE}
+sf_tract_select <- function(tractID){
+  tracts("CA", "San Francisco", cb = TRUE) %>% 
+    filter(TRACTCE == tractID)
+} 
+```
+
+```{r create all cbgs, eval=FALSE, include=FALSE}
+create_cbgs <- function(tractID){
+  visitiacion_valley_cbgs <- block_groups("CA", "San Francisco") %>% 
+  st_centroid() %>% 
+  .[sf_tract_select(tractID),] %>% 
+  st_drop_geometry() %>% 
+  left_join(block_groups("CA", "San Francisco") %>% select(GEOID)) %>% 
+  st_as_sf()
+}
+
+sf_tractIDs <- sf_neighborhoods$TRACTCE10
+many_cbgs <- map_dfr(sf_tractIDs, create_cbgs)
+saveRDS(many_cbgs, "sf_cbgs.rds")
+```
+
+```{r select amenities, include=FALSE}
+sf_pois <- pois %>% 
+  .[sf_boundary,] %>% 
+  rename(amenity = fclass)
+
+sf_pois_filter <- sf_pois %>% 
+  filter(amenity %in% c(
+      "park",
+      "supermarket",
+      "restaurant",
+      "school",
+      "kindergarten",
+      "hospital",
+      "bicycle_shop",
+      "market_place",
+      "convenience",
+      "library",
+      "community_centre"
+    )
+  )
+
+saveRDS(sf_pois_filter, "sf_pois.rds")
+```
+
+```{r isochrone creation function, eval=FALSE, include=FALSE}
+isochrone_creation <- function(transmode, cbg){
+  mb_isochrone(
+      cbg,
+      profile = transmode,
+      time = c(5,10,15)
+    ) %>% 
+      mutate(
+        mode = transmode,
+        tract = toString(cbg$TRACTCE), 
+        nhood = toString(cbg$NHOOD)
+      )
+}
+```
+
+```{r mapbox isochrone creation and storing, eval=FALSE, include=FALSE}
+sf_cbgs <- readRDS("sf_cbgs.rds")
+modes_of_transport <- c("walking","cycling","driving")
+large_isochrone <- map_dfr(modes_of_transport, isochrone_creation, cbg = sf_cbgs)
+saveRDS(large_isochrone, "large_isochrone.rds")
+```
+
+```{r public transit isochrone creation, eval=FALSE, include=FALSE}
+
+# I didn't finish this section, but would like to in my resubmission.  It got 
+# messier than I thought it would so have just the bare bones for the future here.
+
+isochrones <- readRDS("small_isochrone.rds")
+isochrones_walking <- isochrones %>% 
+  filter(mode == "walking")
+isochrones_cycling <- isochrones %>% 
+  filter(mode == "cycling")
+
+stops_all <- gtfs$stops %>% 
+  st_as_sf(coords = c("stop_lon","stop_lat"), crs = 4326)
+
+stops_walk <- stops_all %>% 
+  .[isochrones_walking,]
+
+stops_cycling <- stops_all %>% 
+  .[isochrones_cycling,]
+
+
+isochrones_firstmile <- isochrones_walking %>% 
+  st_make_valid() %>% 
+  st_join(stops_walk) %>% 
+  st_drop_geometry() %>% 
+  group_by(id) %>% 
+  arrange(time) %>% 
+  filter(!duplicated(stop_id)) %>% 
+  select(
+    firstmile_time = time,
+    id,
+    from_stop_id = stop_id
+  )
+
+raptor <- raptor(
+```
+
+```{rcreate my raw data frame, eval=FALSE, include=FALSE}
+
+sf_pois_filter <- readRDS("sf_pois.rds")
+
+access_raw_large <- readRDS("large_isochrone.rds") %>% 
+  st_make_valid() %>% 
+  st_join(sf_pois_filter) %>%
+  st_drop_geometry() %>% 
+  filter(!is.na(osm_id))
+
+saveRDS(access_raw_large, "access_raw_large.rds")
+```
+### Complete Community Analysis
+
+
+When we talk about access in urban planning, we must consider both the what and the how.  Freedom of movement, especially in densely populated cities, is essential for a complete community.  Investigating whether people can easily move (via foot, bike, or public transit) and access essential amenities is the purpose of the following work.  
+
+I have attempted to create an analysis of San Francisco that reveals which neighborhoods (defined by census block groups) have access to core amenities.  Deciding what types of amenities that are essential to vibrant urban life is somewhat subjective, but I will justify my specific selections based on urban design principles being actualized in cities around the country.  Core to my proposal is the idea that improved bicycle infrastructure could be a leverage point in improving the “completeness” of neighborhoods in S.F.
+
+I will start this discussion by defining what modes of transportation are most important.  Using isochrone data for walking, biking, and driving, I can get a pretty good idea about how far an individual from a given census block can get by each mode of transportation.  To do this, I use the centroid of each census block group in the city as starting points.  This is useful in giving me an accessible range for each mode of transportation from which I can then attach a ranking value.  In the following table, there are two categories: “Rank” and “Reasonable Trip Time.”  Together, these capture what mode of transportation is most preferred in an urban environment and what sorts of travel times individuals would typically be comfortable with for each respective mode.  The ranking values are defined largely on my personal preferences, but could be informed by the proportion of all trips in S.F. for each mode of transportation.  This would be interesting in describing ‘how preferences actually are’, but do not reflect ‘how preferences could be.’  I use my personal preferences to define these values to de-emphasize driving within the city.  I think this is important because in my ideal urban environment, there are as few personal car trips as possible.
+
+
+```{r rank and value integration, echo=FALSE, message=FALSE, warning=FALSE}
+amenity_preference <- data.frame(
+  amenity = c(
+    "park",
+    "supermarket",
+    "restaurant",
+    "school",
+    "kindergarten",
+    "hospital",
+    "bicycle_shop",
+    "market_place",
+    "convenience",
+    "library",
+    "community_centre"
+  ),
+  amenity_value = c(
+    0.8,
+    0.8,
+    0.4,
+    0.8,
+    0.8,
+    0.5,
+    0.1,
+    0.3,
+    0.7,
+    0.6,
+    0.5
+  ),
+  amenity_quantity = c(
+    5,
+    3,
+    5,
+    2,
+    2,
+    1,
+    1,
+    1,
+    4,
+    1,
+    1
+  )
+) %>% 
+  mutate(
+    amenity_decay = -log(0.5)/(amenity_quantity)
+  )
+
+mode_preference <- data.frame(
+  mode = c(
+    "walking",
+    "cycling",
+    "driving"
+  ),
+  mode_value = c(
+    1,
+    0.3,
+    0.1
+  ),
+  mode_reasonable = c(
+    15,
+    5,
+    30
+  )
+) %>% 
+  mutate(
+    mode_decay = -log(0.5)/(mode_reasonable**2)
+  )
+
+amenity_header <- c("Amenity", "Value", "Ideal Quantity")
+mode_header <- c("Mode of Transport", "Rank", "Reasonable Trip Time")
+table_mode_preference <- mode_preference %>% 
+  mutate(
+    mode = c(
+      "Walking", 
+      "Biking", 
+      "Driving"
+      )
+  )
+
+knitr::kable(table_mode_preference %>% 
+               select(mode, mode_value, mode_reasonable), 
+               col.names = mode_header,
+               align = "lcc",
+               caption = "List of Transportation Modes and Ranks:",
+               )
+
+```
+
+With the transportation modes defined, I want to continue by explaining my selection of core amenities.  In the following table, amenities are paired with an idealized quantity and value score.  The idealized quantity reflects how many of a given amenity would exist in a complete community; the score describes how important that specific amenity is to the overall completeness (i.e. a supermarket is more important than a community center).
+
+In this table there is a strong emphasis on educational and community meeting places.  At a fundamental level, I understand urban centers to exist so many people can come together; spaces that allow this to occur without cost are prioritized in my ranking.  Ideally these rankings could be better defined by community survey data to incorporate preferences from residents.  In the absence of that data, I have defined these in a way that makes most sense to me.  One category of relevance is ‘bike shop.’  This may seem a peculiar inclusion, but the rationality is that if my ultimate proposal revolves around investment in bicycles as a primary mode of urban transportation, then these spaces for repair become of heightened significance (granted still much less significant than schools or hospitals).
+
+```{r amenity rank integration, echo=FALSE, message=FALSE, warning=FALSE}
+table_amenity_preference <- amenity_preference %>% 
+  mutate(
+    amenity = c(
+      "Park",
+      "Supermarket",
+      "Restaurant",
+      "School",
+      "Kindergarten",
+      "Hospital",
+      "Bicycle Shop",
+      "Market Place",
+      "Convenience",
+      "Library",
+      "Community Center"
+      )
+  )
+
+knitr::kable(table_amenity_preference %>% select(amenity, amenity_value, amenity_quantity),
+             col.names = amenity_header, 
+             align = "lcc", 
+             caption = "List of Amenities and Values:"
+             )
+```
+
+Also important to this weighting is how the specific values change as the quantity of an accessible amenity exceeds the idealized number I have specified.  Similarly for transportation, once the reasonable time for a specific mode is exceeded, the score associated with that mode should decrease.  To model this, I use a simple decay function to reflect the weakening effects of each additional amenity.  This can be represented as so:
+
+$\mbox{Score} =e^{-c d},$ where $c$ is count and $d$ is decay coefficient. 
+ 
+For the ranking of transportation I implemented a slightly different function.  For each mode of transportation, I defined a “reasonable trip time” that can be used as an acceptable trip time.  I then fixed that reasonable value to a 0.5 scoring output to determine the decay coefficient for my function. For trip times above this reasonable trip time quantity, there should be a dampening of the ranking associated with the mode of transportation (i.e. though walking has the highest rank of 1, if a given trip takes 30 minutes that ranking should be diminished).  Additionally, I propose that up until that reasonable trip time, the decay of that rank should be relatively slow and then increase quicker beyond that value.  Instead of a steep decrease, I believe a more accurate function should look like a mirrored s-curve. This means that the difference between 3 and 5 minute walking trips scores  is less than the difference between 14 and 16 minute trips. To reflect this I adjusted the above function for mode scoring with an exponential as so:
+
+$\mbox{Score} =e^{-{t^2 d}},$ where $t$ is time and $d$ is decay coefficient. 
+
+So with these parameters defined, we can take a look at how neighborhoods in S.F. compare to the standards I defined for completeness.  The way to interpret the following map is that a score of less than 1 is missing essential accessibility (again as I have defined it), and a score greater than 1 reflects accessibility beyond the baseline I chose. 
+```{r creation of completness scores, message=FALSE, warning=FALSE, include=FALSE}
+complete_temp_large <- readRDS("access_raw_large.rds") %>% 
+  left_join(
+    amenity_preference,
+    by = "amenity"
+  ) %>% 
+  left_join(
+    mode_preference,
+    by = "mode"
+  ) %>% 
+  group_by(id,mode,amenity) %>% 
+  arrange(time) %>% 
+  mutate(
+    amenity_rank = row_number() - 1
+  ) %>% 
+  ungroup()
+
+complete_baseline <- data.frame(
+  amenity = amenity_preference$amenity %>% 
+    rep(amenity_preference$amenity_quantity)
+) %>% 
+  left_join(
+    amenity_preference,
+    by = "amenity"
+  ) %>% 
+  group_by(amenity) %>% 
+  mutate(
+    amenity_rank = row_number() - 1
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * 0.5
+  )
+
+complete_modes_large <- complete_temp_large %>% 
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * exp(-time * mode_decay) 
+  ) %>% 
+  group_by(id, mode) %>% 
+  arrange(desc(score)) %>% 
+  filter(!duplicated(osm_id)) %>%
+  summarize(
+    score = sum(score, na.rm=T)/sum(complete_baseline$score)
+  )
+
+complete_total_large <- complete_temp_large %>% 
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * exp(-time * mode_decay) * mode_value
+  ) %>% 
+  group_by(id) %>% 
+  arrange(desc(score)) %>% 
+  filter(!duplicated(osm_id)) %>% 
+  summarize(
+    score = sum(score, na.rm = T)/sum(complete_baseline$score)
+  ) %>% 
+  mutate(mode = "total") 
+
+complete_total_large_no_driving <- complete_temp_large %>% 
+  filter(!mode == "driving") %>%  
+  mutate(
+    score = amenity_value * exp(-amenity_rank * amenity_decay) * exp(-time * mode_decay) * mode_value
+  ) %>% 
+  group_by(id) %>% 
+  arrange(desc(score)) %>% 
+  filter(!duplicated(osm_id)) %>% 
+  summarize(
+    score = sum(score, na.rm = T)/sum(complete_baseline$score)
+  ) %>% 
+  mutate(mode = "total")
+
+complete_large <- rbind(
+  complete_modes_large,
+  complete_total_large
+)
+
+complete_large_nodriving <- rbind(
+  (complete_modes_large %>% filter(!mode == "driving")),
+  complete_total_large_no_driving
+)
+
+```
+
+
+```{r complete map with all modes, echo=FALSE}
+complete_map_large <- complete_large %>% 
+  pivot_wider(
+    names_from = "mode",
+    values_from = "score"
+  ) %>% 
+  cbind(readRDS("sf_cbgs.rds") %>% select(GEOID)) %>% 
+  st_as_sf() 
+
+mapview(complete_map_large,
+        zcol = "total",
+        at = seq(0, 3.5, 0.5)
+        )
+```
+
+Observable here is that most of S.F. meets my standards with the exception of the two southwest and southeast corners of the city.  This map aggregates all modes of transportation and assumes that residents would have access to walking, biking, and driving.  Regardless of whether or not that is true, I have already mentioned that I want to minimize driving in urban environments.  There are a number of reasons for this, but one basic issue is that many residents cannot afford a personal vehicle.  In California, [AAA estimates](https://www.aaa.com/autorepair/articles/average-annual-cost-of-new-vehicle-ownership) the annual cost of car ownership to be in the range of $6,000 to $11,000. Looking at the median income of neighborhoods in S.F. this can be as much as a quarter of annual income for some residents.  Compounded with already extreme housing burden rates within the city and this sort of expense seems increasingly untenable.
+
+
+With this in mind, I want to recreate this map without considering the accessibility from private vehicles.  Without the contribution of driving access, the updated completeness scores are slightly reduced.  
+```{r complete map without driving, echo=FALSE}
+complete_map_large_nodriving <- complete_large_nodriving %>% 
+  pivot_wider(
+    names_from = "mode",
+    values_from = "score"
+  ) %>% 
+  cbind(readRDS("sf_cbgs.rds") %>% select(GEOID)) %>% 
+  st_as_sf() 
+mapview(complete_map_large_nodriving, 
+        zcol = "total",
+        at = seq(0, 3.5, 0.5)
+        )
+```
+
+This marginal decrease begs the question how walking and biking then contribute to this completeness score.  What is interesting is that even though walking receives a generous ranking in my initial tables, a city without any biking or driving sees many more neighborhoods isolated from amenities with sub 1 completeness scores.
+
+```{r map of walking scores, echo=FALSE}
+mapview(complete_map_large, 
+        zcol = "walking",
+        at = seq(0, 3.5, 0.5)
+        ) 
+```
+
+Looking at a map of just biking accessibility sees significantly greater completeness scoring –even though I assigned a low bike ranking weight of 0.3.   With a slightly increased ranking every neighborhood in the city could quickly see a full completeness score.  This is particularly compelling when considering that the average annual ownership cost of a bike is [around $350](https://www.treehugger.com/how-much-does-it-cost-to-commute-by-bike-4858452). This may suggest that the city would be wise to invest more into making this mode of transportation more preferable.  Potentially, at relatively low cost, the city could radically improve the accessibility of amenities and the overall completeness of all neighborhoods.
+
+```{r map of biking scores, echo=FALSE}
+mapview(complete_map_large, 
+        zcol = "cycling",
+        at = seq(0, 3.5, 0.5)
+        )
+```
+
+The final step of this analysis would be to introduce public transportation.  It would be interesting to see how the cost of comprehensive, desirable public transport would compare to the cost of improving community access to biking.  This is certainly not to pit the MUNI budget against that of the SFMTA bike planning department; there are still many interesting considerations like biking plus public transit (i.e. putting a bike on the front of a bus). Integrated modes of transit present promising opportunities to build better community completeness.  Additionally it is important to consider that many residents in a city are not physically able to bike, and investment in public transportation perhaps better serves a general population.  Also, much of these specific scores are a product of assumptions I made in the value decay formula.  By squaring the factor in the transportation score function, I am producing much higher completeness scores than had I used the same computation from the amenity value decay.
+
+Regardless, some interesting conclusions can be drawn from this analysis. There seem to be some low hanging fruit in improving the completeness of S.F. neighborhoods.  Increasing residents’ inclination to bike is potentially a cost effective way to build better neighborhoods. 
+

@@ -1,0 +1,17 @@
+"0","sunset_pm25_voronoi <-
+  sunset_outdoor_sensors%>% 
+  st_union() %>% 
+  st_voronoi() %>% 
+  st_cast() %>% 
+  st_as_sf() %>% 
+  st_intersection(.,st_union(sf_cbgs)) %>% 
+  st_join(sunset_sensors_clean %>% filter(Location == ""outside""))
+"
+"2","Warning in st_voronoi.sfc(.) :"
+"2","
+ "
+"2"," st_voronoi does not correctly triangulate longitude/latitude data
+"
+"2","New names:
+* NA -> ...1
+"

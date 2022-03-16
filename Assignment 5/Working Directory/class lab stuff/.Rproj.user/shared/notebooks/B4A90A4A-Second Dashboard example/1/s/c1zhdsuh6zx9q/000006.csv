@@ -1,0 +1,9 @@
+"0","selectInput(
+  inputId = ""city"", 
+  label = ""Jurisdiction:"",
+  choices = c("""",smc_places$NAME)
+)
+"
+"2","Error in selectInput(inputId = ""city"", label = ""Jurisdiction:"", choices = c("""",  : 
+  could not find function ""selectInput""
+"

@@ -1,0 +1,19 @@
+"0","bayview_pm25_indoor_voronoi_tract <-
+  bayview_pm25_indoor_voronoi %>% 
+  st_intersection(bayview_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(bayview_boundary %>% dplyr::select(GEOID))
+"
+"2","Warning:"
+"2"," attribute variables are assumed to be spatially constant throughout all geometries
+"
+"1","Joining, by = ""GEOID""
+"

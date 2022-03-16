@@ -1,0 +1,17 @@
+"0","bayview_pm25_indoor_voronoi <-
+  bayview_indoor_sensors %>% 
+  st_union() %>% 
+  st_voronoi() %>% 
+  st_cast() %>% 
+  st_as_sf() %>% 
+  st_intersection(.,st_union(sf_cbgs)) %>% 
+  st_join(bayview_sensors_clean %>% filter(Location == ""inside""))
+"
+"2","Warning in st_voronoi.sfc(.) :"
+"2","
+ "
+"2"," st_voronoi does not correctly triangulate longitude/latitude data
+"
+"2","New names:
+* NA -> ...1
+"

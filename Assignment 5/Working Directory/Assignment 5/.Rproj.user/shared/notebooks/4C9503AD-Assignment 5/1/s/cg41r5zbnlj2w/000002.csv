@@ -1,0 +1,7 @@
+"0","bayview_indoor_sensors <- "
+"0","  bayview_sensors_clean %>%"
+"0","  filter(Location == ""inside"") %>% "
+"0","  group_by(sensor_index) %>% "
+"0","  summarise(PM25 = mean(PM25)) "
+"0",""
+"0","saveRDS(bayview_indoor_sensors, ""bayview_indoor_sensors.rds"")"

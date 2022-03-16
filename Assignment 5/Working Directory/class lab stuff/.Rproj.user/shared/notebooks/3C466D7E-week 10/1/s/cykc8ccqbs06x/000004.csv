@@ -1,0 +1,11 @@
+"0","bay_pm25_voronoi <-
+  bay_sensors_clean %>%
+  filter(location_type == ""outside"") %>% 
+  st_union() %>% 
+  st_voronoi() 
+"
+"2","Warning in st_voronoi.sfc(.) :"
+"2","
+ "
+"2"," st_voronoi does not correctly triangulate longitude/latitude data
+"

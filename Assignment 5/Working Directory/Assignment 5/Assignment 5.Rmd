@@ -1,0 +1,1610 @@
+---
+title: "Air Quality Data Supplement"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(remotes)
+install_github("yonghah/esri2sf")
+
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(mapview)
+library(mapboxapi)
+library(tigris)
+library(jsonlite)
+library(esri2sf)
+library(jsonlite)
+library(lubridate)
+library(censusapi)
+library(RColorBrewer)
+library(rmapshaper)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+acs_vars_2019_5yr <- readRDS("acs_vars_2019_5yr.rds")
+median_income_2019 <- readRDS("median_income_2019.rds")
+map_sensor_set <- readRDS("map_sensor_set.rds")
+map_pm25_set <- readRDS("map_pm25_set.rds")
+map_cbgs <- readRDS("map_cbgs.rds")
+map_boundary <- readRDS("map_boundary.rds")
+sf_cbgs <- readRDS("sf_cbgs.rds")
+# sf_sensors <- readRDS("sf_sensors.rds")
+```
+
+```{r create location (could localize), eval=FALSE, include=FALSE}
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <- counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names) %>%
+  st_transform(4326)
+
+sf_cbgs <- block_groups("CA","San Francisco", cb = T, progress_bar = F) %>% 
+  filter(!TRACTCE %in% c ("017902","980401")) %>% 
+  st_transform(4326)
+
+stanford_boundary <- places("CA", cb = T) %>% 
+  filter(NAME == "Stanford") %>% 
+  st_transform(4326)
+
+sf_boundary <- places("CA", cb = T) %>% 
+  filter(NAME == "San Francisco") %>% 
+  st_transform(4326)
+
+bayview_boundary <- tracts("CA", "San Francisco",  cb = T) %>% 
+  filter(TRACTCE %in% c("980900",
+                        "023103",
+                        "023102",
+                        "061200",
+                        "023003",
+                        "023001",
+                        "980600",
+                        "023103",
+                        "023200",
+                        "023300",
+                        "023400",
+                        "061000")
+         ) %>% 
+  st_transform(4326)
+
+bayview_cbgs <-
+  sf_cbgs %>% 
+  .[bayview_boundary,]
+
+sunset_boundary <- tracts("CA", "San Francisco", cb = T) %>% 
+  filter(TRACTCE %in% c(
+                        "035100",
+                        "035202",
+                        "035201",
+                        "035400",
+                        "035300",
+                        "030201",
+                        "030202",
+                        "030301",
+                        "030302",
+                        "030400",
+                        "030800",
+                        "032601",
+                        "032801",
+                        "032802",
+                        "032902",
+                        "032901",
+                        "032602",
+                        "032700",
+                        "033000")
+         ) %>% 
+  st_transform(4326)
+
+sunset_cbgs <-
+  sf_cbgs %>% 
+  .[sunset_boundary,] %>% 
+  filter(GEOID != "060759803001")
+
+map_boundary <- sunset_boundary %>% 
+  rbind(bayview_boundary)
+saveRDS(map_boundary, "map_boundary.rds")
+
+map_cbgs <- bayview_cbgs %>% 
+  mutate(neighborhood = "Bay View") %>% 
+  rbind(sunset_cbgs %>% mutate(neighborhood = "Sunset")) %>% 
+  filter(GEOID != "060750604001")
+saveRDS(map_cbgs, "map_cbgs.rds")
+```
+
+```{r importing all sensors, include=FALSE}
+pa_api <- "4CDE9DCD-A0AB-11EC-B9BF-42010A800003"
+
+json <- fromJSON(paste0(
+    "https://api.purpleair.com/v1/sensors?api_key=",
+    pa_api,
+    "&fields=name,location_type,latitude,longitude,pm2.5_1week,temperature,humidity,primary_id_a,primary_key_a,secondary_id_a,secondary_key_a,primary_id_b,primary_key_b,secondary_id_b,secondary_key_b"
+  ))
+
+all_sensors <- json %>% 
+  .$data %>% 
+  as.data.frame() %>% 
+  set_names(json$fields) %>% 
+  filter(
+    !is.na(longitude),
+    !is.na(latitude)
+  ) %>% 
+  st_as_sf(coords = c("longitude","latitude"), crs = 4326) %>% 
+  mutate(location_type = ifelse(
+    location_type == 0,
+    "outside",
+    "inside"
+  ))
+
+sf_sensors <-
+  all_sensors %>% 
+  .[sf_cbgs,]
+
+```
+
+
+
+```{r setting date range for API call, eval=FALSE, include=FALSE}
+starts <- seq.Date(ymd("2022-02-01"), by = "1 week", length.out = 4) %>% as.character()
+ends <- seq.Date(ymd("2022-02-07"), by = "1 week", length.out = 4) %>% as.character()
+start_end <- map2(starts, ends, function(x, y) c(x, y))
+```
+
+
+```{r average PM25 for month of sf PA sensor data, eval=FALSE, include=FALSE}
+sf_sensor_data_full <- NULL
+i <- 1
+
+for (pair in start_end) {
+  start <- paste0(pair[1], "%2000:08:00")
+  end <- paste0(pair[2], "%2000:08:00")
+  
+  temp_sf_sensor_data <-
+    1:nrow(sf_sensors) %>%
+    map_dfr(function(row) {
+      print(paste0(row, ". ", sf_sensors[row, ]$sensor_index))
+      
+      a1 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sf_sensors[row, ]$primary_id_a,
+          "/feeds.csv?api_key=",
+          sf_sensors[row, ]$primary_key_a,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "PM1.0_CF_1_ug/m3_A",
+            "PM2.5_CF_1_ug/m3_A",
+            "PM10.0_CF_1_ug/m3_A",
+            "Uptime_Minutes_A",
+            "RSSI_dbm_A",
+            "Temperature_F_A",
+            "Humidity_%_A",
+            "PM2.5_CF_ATM_ug/m3_A"
+          )
+        )
+      
+      a2 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sf_sensors[row, ]$secondary_id_a,
+          "/feeds.csv?api_key=",
+          sf_sensors[row, ]$secondary_key_a,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "0.3um/dl_A",
+            "0.5um/dl_A",
+            "1.0um/dl_A",
+            "2.5um/dl_A",
+            "5.0um/dl_A",
+            "10.0um/dl_A",
+            "PM1.0_CF_ATM_ug/m3_A",
+            "PM10_CF_ATM_ug/m3_A"
+          )
+        )
+      
+      b1 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sf_sensors[row, ]$primary_id_b,
+          "/feeds.csv?api_key=",
+          sf_sensors[row, ]$primary_key_b,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "PM1.0_CF_1_ug/m3_B",
+            "PM2.5_CF_1_ug/m3_B",
+            "PM10.0_CF_1_ug/m3_B",
+            "HEAP_B",
+            "ADC0_voltage_B",
+            "Atmos_Pres_B",
+            "Not_Used_B",
+            "PM2.5_CF_ATM_ug/m3_B"
+          )
+        )
+      
+      b2 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sf_sensors[row, ]$secondary_id_b,
+          "/feeds.csv?api_key=",
+          sf_sensors[row, ]$secondary_key_b,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "0.3um/dl_B",
+            "0.5um/dl_B",
+            "1.0um/dl_B",
+            "2.5um/dl_B",
+            "5.0um/dl_B",
+            "10.0um/dl_B",
+            "PM1.0_CF_ATM_ug/m3_B",
+            "PM10_CF_ATM_ug/m3_B"
+          )
+        )
+      
+      combined <- a1 %>%
+        left_join(a2, by = "created_at") %>%
+        left_join(b1, by = "created_at") %>%
+        left_join(b2, by = "created_at") %>%
+        transmute(
+          date = as.Date(created_at),
+          sensor_index = (sf_sensors[row, ]$sensor_index),
+          Location = sf_sensors[row, ]$location_type,
+          PM25 = 0.524 * as.numeric(`PM2.5_CF_1_ug/m3_A`) - 0.0852 * as.numeric(`Humidity_%_A`) + 5.72
+        )
+      
+    }) %>%
+    group_by(date, Location, sensor_index) %>%
+    summarize(PM25 = mean(PM25, na.rm = T))
+  
+  saveRDS(temp_sf_sensor_data, paste0("week_", i, "_sf_sensor_data.rds"))
+  
+  sf_sensor_data_full <-
+    sf_sensor_data_full %>% 
+    rbind(sf_sensor_data)
+    
+  i <- i + 1
+}
+saveRDS(sf_sensor_data_full,"sf_sensor_data_full.rds")
+```
+```{r me dumb having to recombine all weeks, eval=FALSE, include=FALSE}
+week_1 <- readRDS("2022-02-01%2000:08:00sf_sensor_data.rds")
+week_2 <- readRDS("2022-02-08%2000:08:00sf_sensor_data.rds")
+week_3 <- readRDS("2022-02-15%2000:08:00sf_sensor_data.rds")
+week_4 <- readRDS("2022-02-22%2000:08:00sf_sensor_data.rds")
+
+sf_sensor_data <- rbind(week_1,
+                        week_2,
+                        week_3,
+                        week_4)
+```
+
+
+```{r average PM25 and AQI for month of bayview PA sensor data, eval=FALSE, include=FALSE}
+bayview_sensors <- sf_sensors %>% 
+  .[bayview_boundary,]
+
+bayview_sensor_data_full <- NULL
+i <- 1
+
+for (pair in start_end) {
+  start <- paste0(pair[1], "%2000:08:00")
+  end <- paste0(pair[2], "%2000:08:00")
+  
+  temp_bayview_sensor_data <-
+    1:nrow(bayview_sensors) %>%
+    map_dfr(function(row) {
+      print(paste0(row, ". ", bayview_sensors[row, ]$sensor_index))
+      
+      a1 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          bayview_sensors[row, ]$primary_id_a,
+          "/feeds.csv?api_key=",
+          bayview_sensors[row, ]$primary_key_a,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "PM1.0_CF_1_ug/m3_A",
+            "PM2.5_CF_1_ug/m3_A",
+            "PM10.0_CF_1_ug/m3_A",
+            "Uptime_Minutes_A",
+            "RSSI_dbm_A",
+            "Temperature_F_A",
+            "Humidity_%_A",
+            "PM2.5_CF_ATM_ug/m3_A"
+          )
+        )
+      
+      a2 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          bayview_sensors[row, ]$secondary_id_a,
+          "/feeds.csv?api_key=",
+          bayview_sensors[row, ]$secondary_key_a,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "0.3um/dl_A",
+            "0.5um/dl_A",
+            "1.0um/dl_A",
+            "2.5um/dl_A",
+            "5.0um/dl_A",
+            "10.0um/dl_A",
+            "PM1.0_CF_ATM_ug/m3_A",
+            "PM10_CF_ATM_ug/m3_A"
+          )
+        )
+      
+      b1 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          bayview_sensors[row, ]$primary_id_b,
+          "/feeds.csv?api_key=",
+          bayview_sensors[row, ]$primary_key_b,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "PM1.0_CF_1_ug/m3_B",
+            "PM2.5_CF_1_ug/m3_B",
+            "PM10.0_CF_1_ug/m3_B",
+            "HEAP_B",
+            "ADC0_voltage_B",
+            "Atmos_Pres_B",
+            "Not_Used_B",
+            "PM2.5_CF_ATM_ug/m3_B"
+          )
+        )
+      
+      b2 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          bayview_sensors[row, ]$secondary_id_b,
+          "/feeds.csv?api_key=",
+          bayview_sensors[row, ]$secondary_key_b,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "0.3um/dl_B",
+            "0.5um/dl_B",
+            "1.0um/dl_B",
+            "2.5um/dl_B",
+            "5.0um/dl_B",
+            "10.0um/dl_B",
+            "PM1.0_CF_ATM_ug/m3_B",
+            "PM10_CF_ATM_ug/m3_B"
+          )
+        )
+      
+      combined <- a1 %>%
+        left_join(a2, by = "created_at") %>%
+        left_join(b1, by = "created_at") %>%
+        left_join(b2, by = "created_at") %>%
+        transmute(
+          date = as.Date(created_at),
+          sensor_index = (bayview_sensors[row, ]$sensor_index),
+          Location = bayview_sensors[row, ]$location_type,
+          PM25 = 0.524 * as.numeric(`PM2.5_CF_1_ug/m3_A`) - 0.0852 * as.numeric(`Humidity_%_A`) + 5.72
+        )
+      
+    }) %>%
+    group_by(date, Location, sensor_index) %>%
+    summarize(PM25 = mean(PM25, na.rm = T))
+  
+  saveRDS(temp_bayview_sensor_data, paste0("week_", i, "_bayview_sensor_data.rds"))
+  
+  bayview_sensor_data_full <- 
+    bayview_sensor_data_full %>% 
+    rbind(temp_bayview_sensor_data)
+  
+  i <- i + 1
+}
+  saveRDS(bayview_sensor_data_full,"bayview_sensor_data_full.rds")
+```
+
+
+```{r average PM25 and AQI for month of sunset PA sensor data, eval=FALSE, include=FALSE}
+sunset_sensors <- sf_sensors %>% 
+  .[sunset_boundary,]
+
+sunset_sensor_data_full <- NULL
+i <- 1
+
+for (pair in start_end) {
+  start <- paste0(pair[1], "%2000:08:00")
+  end <- paste0(pair[2], "%2000:08:00")
+  
+  temp_sunset_sensor_data <-
+    1:nrow(sunset_sensors) %>%
+    map_dfr(function(row) {
+      print(paste0(row, ". ", sunset_sensors[row, ]$sensor_index))
+      
+      a1 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sunset_sensors[row, ]$primary_id_a,
+          "/feeds.csv?api_key=",
+          sunset_sensors[row, ]$primary_key_a,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "PM1.0_CF_1_ug/m3_A",
+            "PM2.5_CF_1_ug/m3_A",
+            "PM10.0_CF_1_ug/m3_A",
+            "Uptime_Minutes_A",
+            "RSSI_dbm_A",
+            "Temperature_F_A",
+            "Humidity_%_A",
+            "PM2.5_CF_ATM_ug/m3_A"
+          )
+        )
+      
+      a2 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sunset_sensors[row, ]$secondary_id_a,
+          "/feeds.csv?api_key=",
+          sunset_sensors[row, ]$secondary_key_a,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "0.3um/dl_A",
+            "0.5um/dl_A",
+            "1.0um/dl_A",
+            "2.5um/dl_A",
+            "5.0um/dl_A",
+            "10.0um/dl_A",
+            "PM1.0_CF_ATM_ug/m3_A",
+            "PM10_CF_ATM_ug/m3_A"
+          )
+        )
+      
+      b1 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sunset_sensors[row, ]$primary_id_b,
+          "/feeds.csv?api_key=",
+          sunset_sensors[row, ]$primary_key_b,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "PM1.0_CF_1_ug/m3_B",
+            "PM2.5_CF_1_ug/m3_B",
+            "PM10.0_CF_1_ug/m3_B",
+            "HEAP_B",
+            "ADC0_voltage_B",
+            "Atmos_Pres_B",
+            "Not_Used_B",
+            "PM2.5_CF_ATM_ug/m3_B"
+          )
+        )
+      
+      b2 <- read_csv(
+        paste0(
+          "https://api.thingspeak.com/channels/",
+          sunset_sensors[row, ]$secondary_id_b,
+          "/feeds.csv?api_key=",
+          sunset_sensors[row, ]$secondary_key_b,
+          "&average=1440&round=3&start=",
+          start,
+          "&end=",
+          end,
+          "&timezone=America/Los_Angeles"
+        ),
+        show_col_types = F
+      ) %>%
+        set_names(
+          c(
+            "created_at",
+            "0.3um/dl_B",
+            "0.5um/dl_B",
+            "1.0um/dl_B",
+            "2.5um/dl_B",
+            "5.0um/dl_B",
+            "10.0um/dl_B",
+            "PM1.0_CF_ATM_ug/m3_B",
+            "PM10_CF_ATM_ug/m3_B"
+          )
+        )
+      
+      combined <- a1 %>%
+        left_join(a2, by = "created_at") %>%
+        left_join(b1, by = "created_at") %>%
+        left_join(b2, by = "created_at") %>%
+        transmute(
+          date = as.Date(created_at),
+          sensor_index = (sunset_sensors[row, ]$sensor_index),
+          Location = sunset_sensors[row, ]$location_type,
+          PM25 = 0.524 * as.numeric(`PM2.5_CF_1_ug/m3_A`) - 0.0852 * as.numeric(`Humidity_%_A`) + 5.72
+        )
+      
+    }) %>%
+    group_by(date, Location, sensor_index) %>%
+    summarize(PM25 = mean(PM25, na.rm = T))
+  
+  saveRDS(temp_sunset_sensor_data, paste0("week_", i, "_sunset_sensor_data.rds"))
+  
+  sunset_sensor_data_full <- 
+    sunset_sensor_data_full %>% 
+    rbind(temp_sunset_sensor_data)
+  
+  i <- i + 1
+}
+  saveRDS(sunset_sensor_data_full,"sunset_sensor_data_full.rds")
+```
+
+
+
+```{r Recommended conversion factor, eval=FALSE, include=FALSE}
+bayview_sensor_data_full <- readRDS("bayview_sensor_data_full.rds")
+
+bayview_sensors <- sf_sensors %>% 
+  .[bayview_boundary,]
+
+bayview_sensors_clean <- bayview_sensor_data_full %>% 
+  mutate(
+    AQI = case_when(
+      PM25 <= 12 ~ 
+        paste(round(50/12*PM25), "Good"),
+      PM25 <= 35.4 ~ 
+        paste(round((100-51)/(35.4-12)*(PM25 - 12) + 51), "Moderate"),
+      PM25 <= 55.4 ~
+        paste(round((150-101)/(55.4-35.4)*(PM25 - 35.4) + 101), "Moderately Unhealthy"),
+      PM25 <= 150.4 ~
+        paste(round((200-151)/(150.4-55.4)*(PM25 - 55.4) + 151), "Unhealthy"),
+      PM25 <= 250.4 ~
+        paste(round((300-201)/(250.4-150.4)*(PM25 - 150.4) + 201), "Very Unhealthy"),
+      TRUE ~ 
+        paste(round((500-301)/(500.4-250.5)*(PM25 - 250.5) + 301), "Hazardous")
+    )
+  ) %>% 
+  separate(
+    AQI,
+    into = c("AQI","AQI_Cat"),
+    sep = " ",
+    extra = "merge"
+  ) %>% 
+  mutate(
+    AQI = as.numeric(AQI),
+    AQI_Cat = AQI_Cat %>% factor(levels = c("Good", "Moderate","Moderately Unhealthy","Unhealthy","Very Unhealthy","Hazardous"))
+  ) %>% 
+  left_join(bayview_sensors %>% select(geometry, sensor_index)) %>% 
+  st_as_sf()
+```
+
+```{r mapping outdoor sensors bayview, eval=FALSE, include=FALSE}
+aqi_pal <- colorFactor(
+  palette = "RdYlGn",
+  reverse = T,
+  domain = bayview_sensors_clean$AQI_Cat
+)
+
+bayview_sensors_clean %>% 
+  filter(Location == "outside") %>% 
+  leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addCircleMarkers(
+    color = ~aqi_pal(AQI_Cat),
+    label = ~AQI_Cat,
+    radius = 5,
+    opacity = 0.75
+  ) %>% 
+  addLegend(
+    pal = aqi_pal,
+    values = ~AQI_Cat
+  )
+```
+
+```{r mapping bayview sensor by relative perc, eval=FALSE, include=FALSE}
+aqi_pal2 <- colorQuantile(
+  palette = "RdYlGn",
+  reverse = T,
+  domain = bayview_sensors_clean$AQI,
+  n = 5
+)
+
+bayview_sensors_clean %>% 
+  leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addCircleMarkers(
+    color = ~aqi_pal2(AQI),
+    label = ~paste0(AQI,", ",AQI_Cat),
+    radius = 5,
+    opacity = 0.75
+  ) %>% 
+  addLegend(
+    pal = aqi_pal2,
+    values = ~AQI
+  )
+```
+
+```{r bayview outdoor sensors average over month, eval=FALSE, include=FALSE}
+bayview_outdoor_sensors <- 
+  bayview_sensors_clean %>%
+  filter(Location == "outside") %>% 
+  group_by(sensor_index) %>% 
+  summarise(PM25 = mean(PM25)) 
+
+saveRDS(bayview_outdoor_sensors, "bayview_outdoor_sensors.rds")
+```
+
+```{r bayview indoor sensors average over month, eval=FALSE, include=FALSE}
+bayview_indoor_sensors <- 
+  bayview_sensors_clean %>%
+  filter(Location == "inside") %>% 
+  group_by(sensor_index) %>% 
+  summarise(PM25 = mean(PM25)) 
+
+saveRDS(bayview_indoor_sensors, "bayview_indoor_sensors.rds")
+```
+
+```{r bayview indoor voronoi, eval=FALSE, include=FALSE}
+bayview_pm25_indoor_voronoi <-
+  bayview_indoor_sensors %>% 
+  st_union() %>% 
+  st_voronoi() %>% 
+  st_cast() %>% 
+  st_as_sf() %>% 
+  st_intersection(.,st_union(sf_cbgs)) %>% 
+  st_join(bayview_sensors_clean %>% filter(Location == "inside"))
+
+```
+
+```{r bayview indoor voronoi to tract calculation, eval=FALSE, include=FALSE}
+bayview_pm25_indoor_voronoi_tract <-
+  bayview_pm25_indoor_voronoi %>% 
+  st_intersection(bayview_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(bayview_boundary %>% dplyr::select(GEOID))
+
+saveRDS(bayview_pm25_indoor_voronoi_tract, "bayview_pm25_indoor_voronoi_tract.rds")
+```
+
+```{r bayview outdoor voronoi, eval=FALSE, include=FALSE}
+bayview_pm25_voronoi <-
+  bayview_outdoor_sensors %>% 
+  st_union() %>% 
+  st_voronoi() %>% 
+  st_cast() %>% 
+  st_as_sf() %>% 
+  st_intersection(.,st_union(sf_cbgs)) %>% 
+  st_join(bayview_sensors_clean %>% filter(Location == "outside"))
+
+ggplot(bayview_pm25_voronoi) + geom_sf()
+```
+
+```{r bayview voronoi to tract calculation, eval=FALSE, include=FALSE}
+bayview_pm25_voronoi_tract <-
+  bayview_pm25_voronoi %>% 
+  st_intersection(bayview_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(bayview_boundary %>% dplyr::select(GEOID)) %>% 
+  st_as_sf()
+```
+
+```{r voronoi to cbg calculation, eval=FALSE, include=FALSE}
+bayview_pm25_voronoi_cbg <-
+  bayview_pm25_voronoi %>% 
+  st_intersection(bayview_cbgs) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(bayview_cbgs %>% dplyr::select(GEOID)) %>% 
+  st_as_sf()
+```
+
+```{r mapping bayview by cbg, eval=FALSE, include=FALSE}
+pm25_pal <- colorNumeric(
+  palette = "YlGn",
+  reverse = T,
+  domain = c(
+    bayview_pm25_voronoi_cbg$PM25,
+    bayview_outdoor_sensors$PM25
+  )
+)    
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = bayview_pm25_voronoi_cbg %>% 
+      filter(GEOID != "060759804011"), # Farallon Islands
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~PM25,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addCircleMarkers(
+    data = bayview_outdoor_sensors,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 1,
+    color = "black",
+    weight = 0.5,
+    radius = 5,
+    label = ~PM25
+  ) %>% 
+  addLegend(
+    pal = pm25_pal,
+    values = c(
+      bayview_pm25_voronoi_cbg$PM25,
+      bayview_outdoor_sensors$PM25
+    )
+  )
+```
+
+```{r mapping bayview by tract, eval=FALSE, include=FALSE}
+pm25_pal <- colorNumeric(
+  palette = "YlGn",
+  reverse = T,
+  domain = c(
+    bayview_pm25_voronoi_tract$PM25,
+    bayview_outdoor_sensors$PM25
+  )
+)    
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = bayview_pm25_voronoi_tract ,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~PM25,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addCircleMarkers(
+    data = bayview_outdoor_sensors,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 1,
+    color = "black",
+    weight = 0.5,
+    radius = 5,
+    label = ~PM25
+  ) %>% 
+  addLegend(
+    pal = pm25_pal,
+    values = c(
+      bayview_pm25_voronoi_tract$PM25,
+      bayview_outdoor_sensors$PM25
+    )
+  )
+```
+
+
+
+
+```{r Recommended conversion factor for sunset data, eval=FALSE, include=FALSE}
+sunset_sensor_data_full <- readRDS("sunset_sensor_data_full.rds")
+sunset_sensors <- sf_sensors %>% 
+  .[sunset_boundary,]
+
+sunset_sensors_clean <- sunset_sensor_data_full %>% 
+  mutate(
+    AQI = case_when(
+      PM25 <= 12 ~ 
+        paste(round(50/12*PM25), "Good"),
+      PM25 <= 35.4 ~ 
+        paste(round((100-51)/(35.4-12)*(PM25 - 12) + 51), "Moderate"),
+      PM25 <= 55.4 ~
+        paste(round((150-101)/(55.4-35.4)*(PM25 - 35.4) + 101), "Moderately Unhealthy"),
+      PM25 <= 150.4 ~
+        paste(round((200-151)/(150.4-55.4)*(PM25 - 55.4) + 151), "Unhealthy"),
+      PM25 <= 250.4 ~
+        paste(round((300-201)/(250.4-150.4)*(PM25 - 150.4) + 201), "Very Unhealthy"),
+      TRUE ~ 
+        paste(round((500-301)/(500.4-250.5)*(PM25 - 250.5) + 301), "Hazardous")
+    )
+  ) %>% 
+  separate(
+    AQI,
+    into = c("AQI","AQI_Cat"),
+    sep = " ",
+    extra = "merge"
+  ) %>% 
+  mutate(
+    AQI = as.numeric(AQI),
+    AQI_Cat = AQI_Cat %>% factor(levels = c("Good", "Moderate","Moderately Unhealthy","Unhealthy","Very Unhealthy","Hazardous"))
+  ) %>% 
+  left_join(sunset_sensors %>% select(geometry, sensor_index)) %>% 
+  filter(PM25 < 50) %>% 
+  st_as_sf()
+```
+
+```{r mapping outdoor sensors sunset, eval=FALSE, include=FALSE}
+aqi_pal <- colorFactor(
+  palette = "RdYlGn",
+  reverse = T,
+  domain = sunset_sensors_clean$AQI_Cat
+)
+
+sunset_sensors_clean %>% 
+  filter(Location == "outside") %>% 
+  leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addCircleMarkers(
+    color = ~aqi_pal(AQI_Cat),
+    label = ~AQI_Cat,
+    radius = 5,
+    opacity = 0.75
+  ) %>% 
+  addLegend(
+    pal = aqi_pal,
+    values = ~AQI_Cat
+  )
+```
+
+```{r mapping sunset sensor by relative perc, eval=FALSE, include=FALSE}
+aqi_pal2 <- colorQuantile(
+  palette = "RdYlGn",
+  reverse = T,
+  domain = sunset_sensors_clean$AQI,
+  n = 5
+)
+
+sunset_sensors_clean %>% 
+  leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addCircleMarkers(
+    color = ~aqi_pal2(AQI),
+    label = ~paste0(AQI,", ",AQI_Cat),
+    radius = 5,
+    opacity = 0.75
+  ) %>% 
+  addLegend(
+    pal = aqi_pal2,
+    values = ~AQI
+  )
+```
+
+```{r sunset outdoor sensors average over month, eval=FALSE, include=FALSE}
+sunset_outdoor_sensors <- 
+  sunset_sensors_clean %>%
+  filter(Location == "outside") %>% 
+  group_by(sensor_index) %>% 
+  summarise(PM25 = mean(PM25)) %>% 
+  filter(sensor_index != "53537") #removing NA geometry from faulty sensor
+```
+
+```{r sunset indoor sensors average over month, eval=FALSE, include=FALSE}
+sunset_indoor_sensors <- 
+  sunset_sensors_clean %>%
+  filter(Location == "inside") %>% 
+  group_by(sensor_index) %>% 
+  summarise(PM25 = mean(PM25)) 
+```
+
+```{r sunset indoor voronoi, eval=FALSE, include=FALSE}
+sunset_pm25_indoor_voronoi <-
+  sunset_indoor_sensors%>% 
+  st_union() %>% 
+  st_voronoi() %>% 
+  st_cast() %>% 
+  st_as_sf() %>% 
+  st_intersection(.,st_union(sf_cbgs)) %>% 
+  st_join(sunset_sensors_clean %>% filter(Location == "inside"))
+```
+
+```{r sunset indoor voronoi to tract calculation, eval=FALSE, include=FALSE}
+sunset_pm25_indoor_voronoi_tract <-
+  sunset_pm25_indoor_voronoi %>% 
+  st_intersection(sunset_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(sunset_boundary %>% dplyr::select(GEOID))
+```
+
+```{r sunset outdoor voronoi, eval=FALSE, include=FALSE}
+sunset_pm25_voronoi <-
+  sunset_outdoor_sensors%>% 
+  st_union() %>% 
+  st_voronoi() %>% 
+  st_cast() %>% 
+  st_as_sf() %>% 
+  st_intersection(.,st_union(sf_cbgs)) %>% 
+  st_join(sunset_sensors_clean %>% filter(Location == "outside"))
+
+```
+
+```{r sunset outdoor voronoi to tract calculation, eval=FALSE, include=FALSE}
+sunset_pm25_voronoi_tract <-
+  sunset_pm25_voronoi %>% 
+  st_intersection(sunset_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(sunset_boundary %>% dplyr::select(GEOID)) %>% 
+  st_as_sf()
+```
+
+```{r sunset voronoi to cbg calculation, eval=FALSE, include=FALSE}
+sunset_pm25_voronoi_cbg <-
+  sunset_pm25_voronoi %>% 
+  st_intersection(sunset_cbgs) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(sunset_cbgs %>% dplyr::select(GEOID)) %>% 
+  filter(GEOID != "060750604001") %>% 
+  st_as_sf()
+```
+
+```{r mapping sunset by cbg, eval=FALSE, include=FALSE}
+pm25_pal <- colorNumeric(
+  palette = "RdYlGn",
+  reverse = T,
+  domain = c(
+    sunset_pm25_voronoi_cbg$PM25,
+    sunset_outdoor_sensors$PM25
+  )
+)    
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = sunset_pm25_voronoi_cbg ,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~PM25,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addCircleMarkers(
+    data = sunset_outdoor_sensors,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 1,
+    color = "black",
+    weight = 0.5,
+    radius = 5,
+    label = ~PM25
+  ) %>% 
+  addLegend(
+    pal = pm25_pal,
+    values = c(
+      sunset_pm25_voronoi_cbg$PM25,
+      sunset_outdoor_sensors$PM25
+    )
+  )
+```
+
+```{r mapping sunset by tract, eval=FALSE, include=FALSE}
+pm25_pal <- colorNumeric(
+  palette = "YlGn",
+  reverse = T,
+  domain = c(
+    sunset_pm25_voronoi_tract$PM25,
+    sunset_outdoor_sensors$PM25
+  )
+)    
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = sunset_pm25_voronoi_tract ,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0("Average PM2.5 in Feb: ",round(PM25, digits = 2)),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addCircleMarkers(
+    data = sunset_outdoor_sensors,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 1,
+    color = "black",
+    weight = 0.5,
+    radius = 5,
+    label = ~PM25
+  ) %>% 
+  addLegend(
+    pal = pm25_pal,
+    values = c(
+      sunset_pm25_voronoi_tract$PM25,
+      sunset_outdoor_sensors$PM25
+    )
+  )
+```
+
+
+
+
+
+
+```{r mapping both bayview and the sunset outdoor, eval=FALSE, include=FALSE}
+# map_voroni_set <- sunset_pm25_voronoi_cbg %>% 
+#   rbind(bayview_pm25_voronoi_cbg)
+map_sensor_set <- readRDS("map_sensor_set.rds")
+map_voroni_set <- readRDS("map_voroni_set.rds")
+median_income_2019 <- readRDS("median_income_2019.rds")
+# map_voroni_set <- sunset_pm25_voronoi_tract %>%
+#   rbind(bayview_pm25_voronoi_tract) %>%
+#   st_as_sf()
+# 
+# map_sensor_set <- sunset_outdoor_sensors %>%
+#   rbind(bayview_outdoor_sensors) %>%
+#   st_as_sf()
+
+
+pm25_pal <- colorNumeric(
+  palette = "YlGn",
+  reverse = T,
+  domain = c(
+    map_voroni_set$PM25,
+    map_sensor_set$PM25
+  )
+)    
+
+income_pal <- colorNumeric(
+  palette = "RdPu",
+  reverse = F,
+  domain = median_income_2019$`median income`
+)  
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = map_voroni_set ,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(PM25,2), " µg/m3"),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    group = "Air Quality"
+  ) %>%
+  addCircleMarkers(
+    data = map_sensor_set ,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 1,
+    color = "black",
+    weight = 0.5,
+    radius = 5,
+    label = ~paste0(round(PM25, 2), " µg/m3"),
+    group = "Air Quality"
+  ) %>%
+  addLegend(
+    title = "Weighted Average PM 2.5 <br/>from February 2022 <br/>",
+    labFormat = labelFormat(suffix = " µg/m3"),
+    pal = pm25_pal,
+    values = c(
+      map_voroni_set$PM25,
+      map_sensor_set$PM25
+    ),
+    position = "topright",
+    group = "Air Quality"
+  ) %>%
+  addPolygons(
+    data = median_income_2019 ,
+    fillColor = ~income_pal(`median income`),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    label = ~paste0("Median Income $", prettyNum(signif(median_income_2019$`median income`), ",")),
+    group = "Income"
+  ) %>% 
+  addLegend(
+    title = "Annual Median <br/> Household Income",
+    pal = income_pal,
+    values = median_income_2019$`median income`,
+    labFormat = labelFormat(prefix = "$"),
+    position = "bottomleft",
+    group = "Income"
+  ) %>% 
+  addLayersControl(
+    baseGroups = c("Air Quality",
+                    "Income"),
+    options = layersControlOptions(collapsed = F)
+  )
+  
+```
+
+```{r income map, eval=FALSE, include=FALSE}
+income_pal <- colorNumeric(
+  palette = "RdYlGn",
+  reverse = F,
+  domain = median_income_2019$`median income`
+)  
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = median_income_2019 ,
+    fillColor = ~income_pal(`median income`),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    label = ~paste0("Median Income $", prettyNum(signif(median_income_2019$`median income`), ",")),
+    group = "Income"
+  ) %>% 
+  addLegend(
+    title = "Annual Median <br/> Household Income",
+    pal = income_pal,
+    values = median_income_2019$`median income`,
+    labFormat = labelFormat(prefix = "$"),
+    group = "Income"
+  ) %>% 
+  addLayersControl(
+    baseGroups = c("Air Quality",
+                   "Income"),
+    options = layersControlOptions(collapsed = F)
+  )
+```
+
+```{r plot of each day in the month for a tract, eval=FALSE, include=FALSE}
+voronoi_plot <- bayview_pm25_indoor_voronoi %>% 
+  rbind(sunset_pm25_indoor_voronoi) 
+
+plot_pm25_by_date <-   
+  voronoi_plot %>% 
+  st_intersection(map_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  group_by(GEOID,date) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(map_boundary %>% dplyr::select(GEOID)) %>% 
+  st_as_sf() 
+
+plot_pm25_by_date <- readRDS("plot_pm25_by_date.rds")
+
+plot_pm25_by_date %>% 
+  filter(GEOID == "06075023001") %>%  #this is where the specific tract is selected
+  ggplot() +
+  geom_line(
+    aes(
+      x = date,
+      y = PM25
+    )
+  )
+```
+
+
+
+
+```{r acs dataset to come back to makeup, eval=FALSE, include=FALSE}
+indoor_sensors <-
+  bayview_pm25_indoor_voronoi_tract %>%
+  rbind(sunset_pm25_indoor_voronoi_tract)
+
+census_race_categories <- 
+  c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone",
+    "Some Other Race Alone",
+    "Two or More Races"
+  )
+
+sf_pop_race_2020 <-
+  1:7 %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2019,
+      region = "tract:*",
+      regionin = "state:06+county:075",
+      vars = paste0("B19001",LETTERS[x],"_001E")
+    ) %>%
+      mutate(
+        race = census_race_categories[x]
+      ) %>% 
+      select(
+        tract,
+        race,
+        estimate = paste0("B19001",LETTERS[x],"_001E")
+      )
+  }) %>% 
+  inner_join(map_boundary, by = c("tract" = "TRACTCE")) %>% 
+  filter(GEOID != "060759803001") %>% 
+  st_as_sf() 
+saveRDS(sf_pop_race_2020, "sf_pop_race_2020.rds")
+
+race_pm25 <- sf_pop_race_2020 %>% 
+  left_join(indoor_sensors) #or outdoor sensors either way
+  # mutate(GEOID = substring(.$GEOID, 1, 11))
+
+```
+
+```{r acs income data, eval=FALSE, include=FALSE}
+# acs_vars_2019_5yr <- readRDS("acs_vars_2019_5yr.rds")
+# 
+# median_income_2019 <-
+#   getCensus(
+#     name = "acs/acs5",
+#     vintage = 2019,
+#     region = "tract:*", 
+#     regionin = "state:06+county:075",
+#     vars = "group(B19013)"
+#   ) %>% 
+#   mutate(
+#     cbg =
+#       paste0(state,county,tract)
+#   ) %>% 
+#   select(!c(GEO_ID,state,county,NAME) & !ends_with(c("EA","MA","M"))) %>%
+#   pivot_longer(
+#     ends_with("E"),
+#     names_to = "name",
+#     values_to = "median income"
+#   ) %>%
+#   select(-name) %>% 
+#   filter(`median income` > 0) %>% 
+#   inner_join(map_cbgs, by = c("tract" = "TRACTCE")) %>% 
+#   filter(GEOID != "060759803001") %>% 
+#   st_as_sf()
+
+saveRDS(median_income_2019, "median_income_2019.rds")
+```
+
+
+
+
+
+
+## Data Equity Analysis
+Hopefully the accompanying dashboard gives an interesting look at San Francisco.  I chose to 
+compare the east and west sides of the city because of the natural geographic separation that I 
+thought would be relevant to air quality.  San Francisco is famous for its microclimates, most notably 
+the tendency for fog to hang on one side of the hills (most often towards the ocean).  I had expected
+a more notable difference in air quality between these two regions, which also have a very different racial
+and economic makeup.  This is all presented in various maps and plots, but thought I would comment on how
+this information can inform further data gathering work.
+
+To supplement the air quality dashboard, I went ahead and conducted a brief data equity
+analysis.  Perfect coverage does not exist anywhere in the city, and placing more sensors
+in different S.F. neighborhoods, could give us even better data.  In deciding where to 
+install new sensors, it is first to prioritize redundancy. Shown below is the area of the two regions in San Francisco that are not within a 300 meter radius of an outdoor Purple Air sensor.   
+
+```{r create the uncovered shape file, eval=FALSE, include=FALSE}
+sf_sensors <- readRDS("sf_sensors.rds")
+st_erase <- function(x, y) st_difference(x, st_union(y))
+
+sensor_circles <- sf_sensors %>% 
+  filter(location_type == "outside") %>%
+  st_transform(26910) %>%
+  st_buffer(300) %>%
+  st_transform(4326)
+
+empty_area <-map_boundary %>% 
+  st_erase(sensor_circles)
+
+saveRDS(empty_area, "empty_area.rds")
+```
+
+```{r creating the score for each tract, include=FALSE}
+sf_pop_race_2020 <- readRDS("sf_pop_race_2020.rds")
+median_income_2019 <- readRDS("median_income_2019.rds")
+empty_area <- readRDS("empty_area.rds")
+
+scoring <- empty_area %>% 
+  mutate(
+    uncovered_perc = (st_area(.) %>% as.numeric())/(st_area(map_boundary) %>% as.numeric())
+  ) %>% 
+  st_drop_geometry() %>% 
+  right_join(sf_pop_race_2020) %>% 
+  left_join(median_income_2019) %>% 
+  group_by(GEOID)
+
+black_pop <- scoring %>% 
+  group_by(GEOID) %>% 
+  filter(race == "Black or African American") %>% 
+  summarise(
+    black = sum(estimate)
+  )
+
+scoring_set_black <- scoring %>% 
+  left_join(black_pop) %>% 
+  mutate(
+    geo_pop = sum(estimate),
+    perc_black = sum(black)/geo_pop,
+    sensor_need = (uncovered_perc*geo_pop*perc_black)
+  ) %>% 
+  st_as_sf()
+
+scoring_set <- scoring %>% 
+  left_join(black_pop) %>% 
+  mutate(
+    geo_pop = sum(estimate),
+    perc_black = sum(black)/geo_pop,
+    sensor_need = (uncovered_perc*geo_pop)/`median income`
+  ) %>% 
+  st_as_sf()
+```
+
+```{r echo=FALSE}
+mapview(empty_area)
+```
+
+
+The eastern bayview neighborhoods have far less coverage than those on the opposite side
+of the city.  This reflects much lower resolution data for these regions.  While geographic coverage
+is important, prioritizing that coverage should focus around the most densely populated 
+neighborhoods (in this case, census tracts).  Within the city, African American populations
+have had a history of being neglected with regards to air quality.  [Studies](https://ehp.niehs.nih.gov/doi/10.1289/EHP7679) have linked 
+these populations with significantly higher rates of asthma in the city, and thus receive 
+specific focus for the consideration about where future sensors should be placed.  
+
+Below is a map of where, when weighing these factors, the relative need of additional sensors
+in each census tract is plotted.  This is mostly a means to visualize what is likely already 
+intuitive: the eastern areas of the city should have better monitoring.
+
+```{r plotting the sensor need score by race, echo=FALSE}
+need_pal <- colorQuantile(
+  palette = "RdPu",
+  reverse = F,
+  domain = scoring_set_black$sensor_need,
+  n = 6
+)  
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = scoring_set_black,
+    fillColor = ~need_pal(sensor_need),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    label = ~paste0(scoring_set_black$sensor_need),
+    # group = "Income"
+  ) %>% 
+  addLegend(
+    title = "Need of Additional Sensors <br/> Prioritizing Afican American Populations",
+    pal = need_pal,
+    values = scoring_set_black$sensor_need
+    # labFormat = labelFormat(prefix = "$"),
+    # group = "Income"
+  )
+```
+
+
+```{r plotting the sensor need score by income, eval=FALSE, include=FALSE}
+need_pal <- colorQuantile(
+  palette = "RdPu",
+  reverse = F,
+  domain = scoring_set$sensor_need,
+  n = 6
+)  
+
+leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = scoring_set,
+    fillColor = ~need_pal(sensor_need),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    label = ~paste0(scoring_set$sensor_need),
+    # group = "Income"
+  ) %>% 
+  addLegend(
+    title = "Need of Additional Sensors <br/> Prioritizing Low Income Populations",
+    pal = need_pal,
+    values = scoring_set$sensor_need
+    # labFormat = labelFormat(prefix = "$"),
+    # group = "Income"
+  )
+```
+
+```{r plot for race, eval=FALSE, include=FALSE}
+sf_pm25_race_fill <-
+  # race_pm25 %>% 
+  # group_by(GEOID, race) %>% 
+  # summarize(Percentage = sum(estimate)) %>% 
+  # rbind(
+    race_pm25 %>%
+      group_by(race) %>%
+      summarize(Percentage = sum(estimate)) %>%
+      mutate(GEOID = "Total") %>% 
+  # ) %>%
+  ungroup() %>%
+  filter(GEOID == "Total") %>% 
+  ggplot(
+    aes(
+      x = "",
+      y = Percentage,
+      fill = race %>%  factor(levels = rev(census_race_categories))
+    )
+    ) +
+  geom_bar(
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    fill = "Race of Householder Across Both Geographies"
+  ) +
+  geom_col() +
+  coord_polar(theta = "y", start = 0) + 
+  scale_fill_brewer(palette = "Set3") +
+  guides(
+    fill = guide_legend(
+      reverse = T
+    )
+  ) +
+  theme_void()
+
+#saveRDS(sf_pm25_race_fill, "sf_pm25_race_fill.rds")
+sf_pm25_race_fill
+```

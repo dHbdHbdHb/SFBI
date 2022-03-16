@@ -1,0 +1,11 @@
+"0","# smc_cbgs <- block_groups(""CA"",""San Mateo"", cb = T)
+# saveRDS(smc_cbgs, ""smc_cbgs.rds"")
+map_cbgs <- readRDS(""map_cbgs.rds"")
+"
+"2","Warning in gzfile(file, ""rb"") :"
+"2","
+ "
+"2"," cannot open compressed file 'map_cbgs.rds', probable reason 'No such file or directory'
+"
+"2","Error in gzfile(file, ""rb"") : cannot open the connection
+"

@@ -1,0 +1,357 @@
+---
+title: "week 5"
+output: html_document
+---
+
+```{r}
+setwd("~/Documents/GitHub/SFBI/Assignment 3")
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+devtools::install_github("jamgreen/lehdr")
+
+library(lehdr)
+library(tidyverse)
+library(tidytransit)
+library(remotes)
+library(sf)
+library(censusapi)
+library(tigris)
+library(leaflet)
+library(readxl)
+library(mapboxapi)
+library(mapview)
+(tigris_use_cache = FALSE)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+
+```{r}
+ca_od_read <- read_csv("/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_2019.csv.gz")
+```
+
+```{r}
+zctas <- zctas()
+
+zip <- zctas %>%
+    filter(GEOID10 == "94303")
+
+blocks <- blocks("CA")
+
+zip_blocks <- blocks %>% 
+  st_centroid() %>% 
+  .[zip, ]
+
+zip_od <- ca_od_read %>% 
+  filter(
+    h_geocode %in% zip_blocks$GEOID10 |
+      w_geocode %in% zip_blocks$GEOID10
+  )
+```
+
+```{r}
+saveRDS(zip, "zip.rds")
+saveRDS(zip_blocks, "zip_blocks.rds")
+saveRDS(zip_od, "zip_od.rds")
+```
+
+
+```{r}
+full_zip_od <- 2013:2019 %>% 
+  map_dfr(function(year){
+    
+    print(year)
+    
+    temp <- read_csv(paste0("/Volumes/GoogleDrive-101808300713557119266/Shared drives/SFBI/Data Library/LODES/ca_od_main_JT01_", year, ".csv.gz")) %>% 
+      filter(
+        h_geocode %in% zip_blocks$GEOID10 |
+          w_geocode %in% zip_blocks$GEOID10
+      ) %>% 
+      mutate(year = year)
+    
+    saveRDS(temp, paste0("temp_od_", year, ".rds"))
+    
+    return(temp)
+    
+  })
+```
+
+```{r}
+saveRDS(full_zip_od, "full_zip_od.rds")
+```
+
+```{r}
+full_zip_od <- readRDS("full_zip_od.rds")
+zip_blocks <- readRDS("zip_blocks.rds")
+
+full_zip_od_clean <- full_zip_od %>% 
+  select(-createdate) %>% 
+  filter(!(
+    h_geocode %in% zip_blocks$GEOID10 &
+      w_geocode %in% zip_blocks$GEOID10
+  )) %>%
+  mutate(
+    direction = ifelse(
+      h_geocode %in% zip_blocks$GEOID10,
+      "outbound",
+      "inbound"
+    )
+  )
+
+```
+
+```{r}
+code_pairs <- full_zip_od_clean %>%
+  ungroup() %>%
+  distinct(w_geocode, h_geocode) %>%
+  mutate(
+    pairs = map2(w_geocode, h_geocode, c),
+    pair_code = map_chr(pairs, ~ sort(.x) %>% str_c(collapse = "_"))
+  )
+```
+
+```{r}
+full_zip_od_routing <- full_zip_od_clean %>% 
+  mutate(
+    origin = ifelse(
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = origin %>% substr(1,12),
+    tract = origin %>% substr(1,11)
+  ) %>% 
+  filter(!duplicated(tract))
+```
+
+```{r}
+ca_tracts <- tracts("CA")
+
+zip_od_origin <-
+  full_zip_od_routing %>% 
+  select(tract) %>% 
+  left_join(ca_tracts %>% select(tract = GEOID)) %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+zip_od_destination <-
+  zip %>% 
+  st_centroid() %>% 
+  st_coordinates() 
+```
+
+```{r}
+zip_od_route <- 
+  1:nrow(zip_od_origin) %>%
+  map_dfr(function(x){
+    
+    tryCatch(
+      mb_directions(
+        origin = zip_od_origin[x, ],
+        destination = zip_od_destination,
+        profile = "driving-traffic"
+      ) %>% 
+        mutate(id = x),
+      error = function(e){
+        data.frame(id = x)
+      }
+    )
+    
+    
+  }) %>% 
+  st_as_sf()
+```
+
+
+
+```{r}
+mapbox_call_dataset <- full_zip_od_clean %>%
+  mutate(
+    start = pmin(h_geocode,w_geocode),
+    end = pmax(h_geocode,w_geocode)
+  ) %>% 
+  filter(!duplicated(paste(start,end)))
+```
+
+```{r}
+code_pairs <- full_zip_od_clean %>% 
+  distinct(w_geocode, h_geocode)
+  
+# code_pairs %>%
+#   distinct(pair_code, .keep_all = TRUE)
+```
+
+```{r}
+trunc_geocode <- function(df, n_digits) {
+  df %>%
+    mutate(
+      w_geocode = str_trunc(w_geocode, n_digits, side = "right", ellipsis = ""),
+      h_geocode = str_trunc(h_geocode, n_digits, side = "right", ellipsis = "")
+    ) %>%
+    distinct(w_geocode, h_geocode) %>%
+    nrow()
+}
+map_int(1:16, ~ trunc_geocode(full_zip_od_clean, .x)) %>%
+  enframe()
+```
+
+```{r}
+full_zip_od_clean %>%
+  count(h_geocode) %>%
+  arrange(desc(n))
+```
+
+```{r}
+full_zip_od_clean %>%
+  count*
+```
+
+```{r}
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+```
+
+
+##~~~~~~~~~~
+
+```{r}
+full_zip_od_routing <- full_zip_od_clean %>% 
+  mutate(
+    origin = ifelse(   # this is an interesting step that I should review a little bit more
+      direction == "inbound",
+      h_geocode,
+      w_geocode
+    ),
+    cbg = origin %>%  substr(1,12), #this is moving up to cbg
+    tract = origin %>%  substr(1,11)
+  ) %>% 
+  filter(!duplicated(paste(origin))) %>% 
+  filter(!duplicated(paste(tract))) 
+# this is cool and how to reduce to either tract or cbg granula
+  
+```
+
+```{r}
+ca_tracts <-tracts("CA")
+```
+
+```{r}
+zip_od_origin <- 
+  full_zip_od_routing %>% 
+  select(tract) %>% 
+  left_join(ca_tracts %>%  select(tract = GEOID)) %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_coordinates()
+```
+
+```{r}
+zip <- readRDS("zip.RDS")
+
+zip_od_destination <- 
+  zip %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_coordinates()
+```
+
+```{r}
+zip_od_route <- 
+  1:ceiling(nrow(zip_od_origin)/1000) %>% 
+  map_dfr(function(y){
+    
+    print(y)
+    
+    temp <- (y * 1000 - 999) : pmin(y * 1000, nrow(zip_od_origin)) %>% 
+      map_dfr(function(x){
+        tryCatch(
+          mb_directions(
+            origin = zip_od_origin[x, ],
+            destination = zip_od_destination,
+            profile = "driving-traffic"
+          ) %>% 
+            mutate(id = x),
+          error = function(e){
+            data.frame(id = x)
+          }
+        )
+      }) %>% 
+      st_as_sf()
+      
+      saveRDS(temp, paste0("temp",y,".rds"))
+      
+      return(temp)
+    
+  })
+```
+
+```{r}
+zip_od_route <- saveRDS(zip_od_route,"zip_od_route.rds")
+full_zip_od_routing <- readRDS("")
+```
+
+```{r}
+full_zip_od_routed <- full_zip_od_routing %>% 
+  cbind(zip_od_route)
+
+full_zip_od_final <- full_zip_od_clean %>% 
+  mutate(
+    origin = ifelse(
+      oirigin = ifelse(
+        direction == "inbound",
+        h_geocode,
+        w_geocode
+      ),
+      cbg = substr(oriigin, 1, 12)
+    ) %>% 
+      left_join(
+        full_zip_od_routed %>% 
+          select(cbg, duration, distance)
+      ) %>% 
+      mutate(
+        visits 
+      )
+  )
+```
+
+```{r}
+
+```
+
+census
+```{r}
+zip_blocks_94127 <- readRDS("zip_blocks_94127.rds") %>% 
+  mutate(
+    cbg =
+      paste0(GEOID10)
+  ) %>% st_drop_geometry()
+
+resident_count <- 2013:2019 %>% 
+  map_df(function(yr){
+      getCensus(
+      name = "acs/acs5",
+      vintage = yr,
+      region = "block group:*", 
+      regionin = "state:06+county:075",
+      vars = "group(B01003)"
+    ) %>%
+    select(B01003_001E,state,county,tract,block_group) %>% 
+    mutate(
+      population = B01003_001E,
+      cbg = paste0(state,county,tract,block_group),
+      year = yr
+    )
+  }) %>% 
+  left_join(zip_blocks_94127 %>% select(cbg)) %>% 
+  group_by(year) %>% 
+  summarise(
+    total_population = sum(population)
+  )
+```

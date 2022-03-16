@@ -1,0 +1,5 @@
+"0","sunset_indoor_sensors <- "
+"0","  sunset_sensors_clean %>%"
+"0","  filter(Location == ""inside"") %>% "
+"0","  group_by(sensor_index) %>% "
+"0","  summarise(PM25 = mean(PM25)) "

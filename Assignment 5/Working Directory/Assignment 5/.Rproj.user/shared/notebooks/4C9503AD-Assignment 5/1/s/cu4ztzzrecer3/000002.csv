@@ -1,0 +1,16 @@
+"0","sunset_pm25_indoor_voronoi <-"
+"0","  sunset_indoor_sensors%>% "
+"0","  st_union() %>% "
+"0","  st_voronoi() %>% "
+"0","  st_cast() %>% "
+"0","  st_as_sf() %>% "
+"0","  st_intersection(.,st_union(sf_cbgs)) %>% "
+"0","  st_join(sunset_sensors_clean %>% filter(Location == ""inside""))"
+"2","Warning in st_voronoi.sfc(.) :"
+"2","
+ "
+"2"," st_voronoi does not correctly triangulate longitude/latitude data
+"
+"2","New names:
+* NA -> ...1
+"

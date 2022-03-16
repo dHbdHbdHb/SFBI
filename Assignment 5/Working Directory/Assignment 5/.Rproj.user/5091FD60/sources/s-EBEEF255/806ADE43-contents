@@ -1,0 +1,269 @@
+---
+title: "Air Quality Dashboard "
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(mapview)
+library(mapboxapi)
+library(tigris)
+library(jsonlite)
+library(esri2sf)
+library(jsonlite)
+library(lubridate)
+library(censusapi)
+library(RColorBrewer)
+library(plotly)
+
+# smc_places <- places("CA", cb = T) %>%
+#   st_centroid() %>%
+#   .[counties("CA") %>% filter(NAME == "San Mateo"),] %>%
+#   st_drop_geometry() %>%
+#   left_join(places("CA", cb = T) %>% select(PLACEFP)) %>%
+#   st_as_sf()
+# saveRDS(smc_places, "smc_places.rds")
+# smc_places <- readRDS("smc_places.rds")
+
+# smc_cbgs <- block_groups("CA","San Mateo", cb = T)
+# saveRDS(smc_cbgs, "smc_cbgs.rds")
+# smc_cbgs <- readRDS("smc_cbgs.rds")
+
+
+
+map_pm25_set <- readRDS("map_pm25_set.rds")
+map_sensor_set <- readRDS("map_sensor_set.rds")
+map_cbgs <- readRDS("map_cbgs.rds")
+map_boundary <- readRDS("map_boundary.rds")
+
+median_income_2019 <- readRDS("median_income_2019.rds")
+```
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+selectInput(
+  inputId = "city", 
+  label = "Neighborhood Tract GEOID:",
+  choices = c(map_boundary$GEOID),
+  selected = map_boundary$GEOID[1]
+)
+
+# selectInput(
+#   inputId = "sensor_site",
+#   label = "Sensor Location",
+#   choices = c("Outside", "Inside"),
+#   selected = "Outside"
+# )
+```
+
+Column
+-------------------------------------
+
+### AQI Over the Month of February
+
+```{r}
+plotlyOutput("plot")
+```
+
+```{r, context = "server"}
+outdoor_plot_pm25_by_date <- readRDS("outdoor_plot_pm25_by_date.rds")
+indoor_plot_pm25_by_date <- readRDS("indoor_plot_pm25_by_date.rds")
+
+observeEvent(c(input$city, input$sensor_site),{
+
+  chart <- outdoor_plot_pm25_by_date %>% 
+    # return(if(input$sensor_site == "Outside") outdoor_plot_pm25_by_date else indoor_plot_pm25_by_date) %>% 
+    filter(GEOID == input$city) %>%  #this is where the specific tract is selected
+    ggplot() + 
+    ylim(0,30) +
+    geom_line(
+      aes(
+        x = date,
+        y = PM25
+      )
+    ) 
+    
+  
+  output$plot <- renderPlotly({
+    chart %>% 
+      ggplotly() %>% 
+      config(displayModeBar = F)
+  })
+  
+})
+```
+
+### Racial Makeup
+
+```{r}
+plotlyOutput("plot2")
+```
+
+```{r, context = "server"}
+sf_pm25_race_fill <- readRDS("sf_pm25_race_fill.rds")
+census_race_categories <- 
+  c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone",
+    "Some Other Race Alone",
+    "Two or More Races"
+  )
+
+observeEvent(input$city, {
+
+  chart2 <- sf_pm25_race_fill %>% 
+    filter(GEOID == input$city) %>% 
+    ggplot(
+      aes(
+      x = GEOID,
+      y = Percentage,
+      fill = race %>%  factor(levels = rev(census_race_categories))
+      )
+    ) +
+    geom_bar(
+      stat = "identity",
+      position = "fill"
+    ) +
+    labs(
+      y = "Percentage of Selected Area",
+      fill = "Race of householder"
+    ) +
+    guides(
+      fill = guide_legend(
+        reverse = T
+      )
+    ) +
+    theme_minimal()
+  
+  output$plot2 <- renderPlotly({
+    chart2 %>% 
+      ggplotly() %>% 
+      config(displayModeBar = F)
+  })
+  
+})
+```
+
+Column
+-------------------------------------
+
+### Map
+
+```{r}
+leafletOutput("map")
+```
+
+```{r, context = "server"}
+pm25_pal <- colorNumeric(
+  palette = "YlGn",
+  reverse = T,
+  domain = c(
+    map_pm25_set$PM25,
+    map_sensor_set$PM25
+  )
+)  
+
+income_pal <- colorNumeric(
+  palette = "RdPu",
+  reverse = F,
+  domain = median_income_2019$`median income`
+)  
+
+output$map <- renderLeaflet({
+  leaflet() %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = map_pm25_set ,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(PM25,2), " µg/m3"),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    group = "Air Quality"
+  ) %>% 
+  addCircleMarkers(
+    data = map_sensor_set,
+    fillColor = ~pm25_pal(PM25),
+    fillOpacity = 1,
+    color = "black",
+    weight = 0.5,
+    radius = 5,
+    label = ~paste0(round(PM25, 2), " µg/m3"),
+    group = "Air Quality"
+  ) %>% 
+  addLegend(
+    title = "Weighted Average PM 2.5 <br/>from February 2022 <br/>",
+    labFormat = labelFormat(suffix = " µg/m3"),
+    pal = pm25_pal,
+    values = c(
+      map_pm25_set$PM25,
+      map_sensor_set$PM25
+    ),
+    position = "topright",
+    group = "Air Quality"
+  ) %>% 
+  addPolygons(
+    data = median_income_2019 ,
+    fillColor = ~income_pal(`median income`),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    ),
+    label = ~paste0("Median Income $", prettyNum(signif(median_income_2019$`median income`), ",")),
+    group = "Income"
+  ) %>% 
+  addLegend(
+    title = "Annual Median <br/> Household Income",
+    pal = income_pal,
+    values = median_income_2019$`median income`,
+    labFormat = labelFormat(prefix = "$"),
+    position = "bottomleft",
+    group = "Income"
+  ) %>% 
+  addLayersControl(
+    baseGroups = c("Air Quality",
+                    "Income"),
+    options = layersControlOptions(collapsed = F)
+  )
+  }
+)
+
+```
+
+```{r, context = "server"}
+observeEvent(input$city, {
+  
+  selected <- map_boundary %>% 
+    filter(GEOID == input$city)
+  
+  leafletProxy("map") %>% 
+    removeShape("selected") %>% 
+    addPolygons(
+      data = selected,
+      fill = F,
+      color = "black",
+      weight = 2,
+      opacity = 1,
+      layerId = "selected"
+    )
+  
+})
+```

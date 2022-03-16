@@ -1,0 +1,23 @@
+"0","plot_pm25_by_date <-   
+  voronoi_plot %>% 
+  st_intersection(map_boundary) %>% 
+  st_make_valid() %>% 
+  mutate(
+    area = st_area(.) %>% as.numeric()
+  ) %>% 
+  st_drop_geometry() %>% 
+  # mutate(GEOID = strtrim(GEOID, 11)) %>% 
+  group_by(GEOID,date) %>% 
+  summarize(
+    PM25 = weighted.mean(PM25, area, na.rm = T)
+  ) %>% 
+  left_join(map_boundary %>% dplyr::select(GEOID)) %>% 
+  st_as_sf() 
+"
+"2","Warning:"
+"2"," attribute variables are assumed to be spatially constant throughout all geometries
+"
+"1","`summarise()` has grouped output by 'GEOID'. You can override using the `.groups` argument.
+"
+"1","Joining, by = ""GEOID""
+"

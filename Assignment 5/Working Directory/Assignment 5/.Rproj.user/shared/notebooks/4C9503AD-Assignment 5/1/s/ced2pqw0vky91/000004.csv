@@ -1,0 +1,11 @@
+"0","scoring_set_black <- scoring %>% 
+  left_join(black_pop) %>% 
+  mutate(
+    geo_pop = sum(estimate),
+    perc_black = sum(black)/geo_pop,
+    sensor_need = (uncovered_perc*geo_pop*perc_black)
+  ) %>% 
+  st_as_sf()
+"
+"1","Joining, by = ""GEOID""
+"
