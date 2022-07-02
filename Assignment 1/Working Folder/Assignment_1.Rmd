@@ -1,5 +1,5 @@
 ---
-title: "Assignment 1"
+title: "East Palo Alto Opportunity to Purchase (OPA) Analysis"
 output: html_document
 ---
 ```{r setup, include=FALSE}
@@ -66,7 +66,7 @@ try <-
 
 ```
 
-## ACS 5 Year Data Analysis
+## Inspecting ACS 5 Year Data
 
 ```{r processing data function}
 process_census_data <- function(data, labels) {

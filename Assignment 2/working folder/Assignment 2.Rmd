@@ -1,7 +1,7 @@
 
 
 ---
-title: "Assignment 2"
+title: "San Francisco Accessibility Analysis"
 output: html_document
 ---
 
@@ -153,7 +153,7 @@ access_raw_large <- readRDS("large_isochrone.rds") %>%
 
 saveRDS(access_raw_large, "access_raw_large.rds")
 ```
-### Complete Community Analysis
+### Complete Community Framework
 
 
 When we talk about access in urban planning, we must consider both the what and the how.  Freedom of movement, especially in densely populated cities, is essential for a complete community.  Investigating whether people can easily move (via foot, bike, or public transit) and access essential amenities is the purpose of the following work.  
